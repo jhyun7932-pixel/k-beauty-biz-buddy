@@ -3,9 +3,14 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Max-Age": "86400",
 };
+
+const GEMINI_MODEL = "gemini-2.5-pro";
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const EXTRACT_PROMPT = `You are a document analysis expert for K-beauty export trade documents.
 Extract ALL text content from this document and organize it into structured sections.
@@ -73,7 +78,7 @@ async function logRateLimitUsage(supabase: any, userId: string, functionName: st
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   try {
@@ -161,9 +166,9 @@ serve(async (req) => {
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+    if (!GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY is not configured");
     }
 
     // Log rate limit usage
@@ -181,45 +186,38 @@ serve(async (req) => {
     const isPdf = filePath.toLowerCase().endsWith(".pdf");
     const mimeType = isPdf ? "application/pdf" : "image/jpeg";
 
-    // Call AI for extraction
-    const messageContent = isPdf
-      ? [
-          { type: "text", text: "이 PDF 문서에서 모든 텍스트를 추출하고 구조화해주세요." },
-          {
-            type: "image_url",
-            image_url: { url: `data:${mimeType};base64,${base64}` },
-          },
-        ]
-      : [
-          { type: "text", text: "이 이미지에서 모든 텍스트를 추출하고 구조화해주세요." },
-          {
-            type: "image_url",
-            image_url: { url: `data:${mimeType};base64,${base64}` },
-          },
-        ];
+    // ── Gemini API 다이렉트 호출 (inlineData로 파일 전달) ────────────────────
+    const extractText = isPdf
+      ? "이 PDF 문서에서 모든 텍스트를 추출하고 구조화해주세요."
+      : "이 이미지에서 모든 텍스트를 추출하고 구조화해주세요.";
 
     const aiResponse = await fetch(
-      "https://ai.gateway.lovable.dev/v1/chat/completions",
+      `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "google/gemini-3-flash-preview",
-          messages: [
-            { role: "system", content: EXTRACT_PROMPT },
-            { role: "user", content: messageContent },
-          ],
-          response_format: { type: "json_object" },
+          systemInstruction: { role: "system", parts: [{ text: EXTRACT_PROMPT }] },
+          contents: [{
+            role: "user",
+            parts: [
+              { text: extractText },
+              { inlineData: { mimeType, data: base64 } },
+            ],
+          }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            maxOutputTokens: 4096,
+          },
         }),
       }
     );
 
     if (!aiResponse.ok) {
       const errText = await aiResponse.text();
-      console.error("AI error:", aiResponse.status, errText);
+      let parsedError: any = {};
+      try { parsedError = JSON.parse(errText); } catch { /* raw */ }
+      console.error(`[extract-document] Gemini 오류 ${aiResponse.status}:`, parsedError?.error?.message ?? errText);
       return new Response(
         JSON.stringify({ error: "AI 텍스트 추출 실패" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -227,7 +225,7 @@ serve(async (req) => {
     }
 
     const aiResult = await aiResponse.json();
-    const content = aiResult.choices?.[0]?.message?.content;
+    const content = aiResult.candidates?.[0]?.content?.parts?.[0]?.text;
 
     let parsed: any;
     try {

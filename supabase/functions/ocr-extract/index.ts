@@ -3,8 +3,13 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Max-Age": "86400",
 };
+
+const GEMINI_MODEL = "gemini-2.5-pro";
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const SYSTEM_PROMPT = `You are a cosmetic ingredient extraction expert. Extract ALL ingredients from the label image or text.
 
@@ -77,7 +82,7 @@ async function logRateLimitUsage(supabase: any, userId: string, functionName: st
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   try {
@@ -139,87 +144,77 @@ serve(async (req) => {
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      throw new Error("LOVABLE_API_KEY is not configured");
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+    if (!GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY is not configured");
     }
 
     await logRateLimitUsage(supabaseClient, userId, "ocr-extract");
 
-    let messageContent: any[];
-    
+    // ── Gemini API 다이렉트 호출 (inlineData로 이미지 전달) ──────────────────
+    const OCR_TEXT = "Extract ALL ingredients from this cosmetic label. Return each ingredient with English INCI name and Korean name. Be thorough and accurate.";
+
+    // Gemini parts 빌드 (rawText/base64/URL 케이스별 처리)
+    let userParts: any[];
     if (rawText) {
-      messageContent = [
-        {
-          type: "text",
-          text: `Extract all cosmetic ingredients from this text. Return Korean names too.\n\n${rawText.slice(0, 50000)}`
-        }
-      ];
+      userParts = [{ text: `Extract all cosmetic ingredients from this text. Return Korean names too.\n\n${rawText.slice(0, 50000)}` }];
     } else if (imageBase64) {
-      messageContent = [
-        {
-          type: "text",
-          text: "Extract ALL ingredients from this cosmetic label. Return each ingredient with English INCI name and Korean name. Be thorough and accurate."
-        },
-        {
-          type: "image_url",
-          image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
-        }
+      userParts = [
+        { text: OCR_TEXT },
+        { inlineData: { mimeType: "image/jpeg", data: imageBase64 } },
       ];
     } else {
-      messageContent = [
-        {
-          type: "text",
-          text: "Extract ALL ingredients from this cosmetic label. Return each ingredient with English INCI name and Korean name. Be thorough and accurate."
-        },
-        {
-          type: "image_url",
-          image_url: { url: imageUrl }
-        }
+      // imageUrl → fetch하여 base64로 변환 후 inlineData로 전달
+      const imgRes = await fetch(imageUrl);
+      if (!imgRes.ok) throw new Error(`이미지 URL 로딩 실패: ${imgRes.status}`);
+      const imgBuf = await imgRes.arrayBuffer();
+      const imgUint8 = new Uint8Array(imgBuf);
+      let imgBinary = "";
+      for (let i = 0; i < imgUint8.length; i++) imgBinary += String.fromCharCode(imgUint8[i]);
+      const imgBase64 = btoa(imgBinary);
+      const contentType = imgRes.headers.get("content-type") || "image/jpeg";
+      userParts = [
+        { text: OCR_TEXT },
+        { inlineData: { mimeType: contentType, data: imgBase64 } },
       ];
     }
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: messageContent }
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0.1,
-        max_tokens: 4000,
-      }),
-    });
+    const response = await fetch(
+      `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { role: "system", parts: [{ text: SYSTEM_PROMPT }] },
+          contents: [{ role: "user", parts: userParts }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.1,
+            maxOutputTokens: 4000,
+          },
+        }),
+      }
+    );
 
     if (!response.ok) {
+      const errorText = await response.text();
+      let parsedError: any = {};
+      try { parsedError = JSON.parse(errorText); } catch { /* raw */ }
+      console.error(`[ocr-extract] Gemini 오류 ${response.status}:`, parsedError?.error?.message ?? errorText);
       if (response.status === 429) {
         return new Response(
           JSON.stringify({ error: "요청이 너무 많습니다. 잠시 후 다시 시도해주세요." }),
           { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "AI 크레딧이 부족합니다." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
       return new Response(
-        JSON.stringify({ error: "AI 서비스 오류가 발생했습니다." }),
+        JSON.stringify({ error: parsedError?.error?.message ?? "AI 서비스 오류가 발생했습니다." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     const aiResponse = await response.json();
-    const content = aiResponse.choices?.[0]?.message?.content;
+    const content = aiResponse.candidates?.[0]?.content?.parts?.[0]?.text;
     
     if (!content) {
       throw new Error("AI 응답이 비어있습니다");

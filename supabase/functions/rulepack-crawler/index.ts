@@ -2,8 +2,13 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Max-Age': '86400',
 };
+
+const GEMINI_MODEL = 'gemini-2.5-pro';
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 interface PendingUpdate {
   country: string;
@@ -19,8 +24,8 @@ interface PendingUpdate {
 
 // ── AI-powered regulatory crawler ────────────────────────────────────────────
 async function crawlRegulatoryUpdates(): Promise<PendingUpdate[]> {
-  const apiKey = Deno.env.get('LOVABLE_API_KEY');
-  if (!apiKey) throw new Error('LOVABLE_API_KEY not configured');
+  const apiKey = Deno.env.get('GEMINI_API_KEY');
+  if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
 
   const prompt = `You are an expert regulatory compliance analyst specializing in global cosmetics regulations.
 Generate 3 to 5 REALISTIC and PLAUSIBLE regulatory changes that could occur in 2026 for cosmetics/beauty products.
@@ -39,27 +44,28 @@ For each update, provide a JSON object with these exact fields:
 
 Return ONLY a valid JSON array. No markdown, no explanation.`;
 
-  const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'google/gemini-3-flash-preview',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
-      max_tokens: 3000,
-    }),
-  });
+  // ── Gemini API 다이렉트 호출 ──────────────────────────────────────────────
+  const response = await fetch(
+    `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 3000 },
+      }),
+    }
+  );
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`AI API error ${response.status}: ${errText}`);
+    let parsedError: any = {};
+    try { parsedError = JSON.parse(errText); } catch { /* raw */ }
+    throw new Error(`Gemini API error ${response.status}: ${parsedError?.error?.message ?? errText}`);
   }
 
   const data = await response.json();
-  const content = data.choices?.[0]?.message?.content ?? '';
+  const content = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 
   // Strip markdown code fences if present
   const jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -69,7 +75,7 @@ Return ONLY a valid JSON array. No markdown, no explanation.`;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   // Verify admin role via JWT
