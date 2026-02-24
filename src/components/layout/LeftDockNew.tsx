@@ -89,7 +89,13 @@ export function LeftDock({ isCollapsed = false, onToggleCollapse }: LeftDockProp
       .eq('user_id', user.id)
       .eq('role', 'admin')
       .maybeSingle()
-      .then(({ data }) => setIsAdmin(!!data));
+      .then(({ data, error }) => {
+        // 테이블 미존재 또는 권한 오류는 조용히 처리 (admin=false)
+        if (error && error.code !== '42P01' && !error.message?.includes('does not exist')) {
+          console.warn('[LeftDock] user_roles 조회 오류:', error.message);
+        }
+        setIsAdmin(!!data);
+      });
   }, [user]);
 
   const currentPath = location.pathname;

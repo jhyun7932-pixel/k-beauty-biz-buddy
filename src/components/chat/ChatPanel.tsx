@@ -1,176 +1,255 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, Settings } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { OnboardingStatusChip } from './OnboardingStatusChip';
-import type { ChatMessage } from '@/types';
-import type { OnboardingContext } from '@/types/onboarding';
-import { quickCommands } from '@/data/sampleData';
+// 좌측 AI 채팅 패널
+
+import { useState, useRef, useEffect, type FormEvent, type KeyboardEvent } from "react";
 
 interface ChatPanelProps {
-  messages: ChatMessage[];
-  onSendMessage: (message: string) => void;
-  isProcessing: boolean;
-  onboardingContext?: OnboardingContext | null;
-  onOpenSettings?: () => void;
+  messages: Array<{ id: string; role: string; content: string }>;
+  currentStreamingText: string;
+  currentPhase2Text: string;
+  isStreaming: boolean;
+  phase: string;
+  error: string | null;
+  onSendMessage: (msg: string) => void;
+  onCancel: () => void;
 }
 
-const placeholders = [
-  "예: '홍콩 바이어에게 보낼 제안 패키지 만들어줘'",
-  "예: 'MOQ 300, 납기 20일, FOB로 반영해줘'",
-];
-
-export function ChatPanel({ 
-  messages, 
-  onSendMessage, 
-  isProcessing,
-  onboardingContext,
-  onOpenSettings,
+export default function ChatPanel({
+  messages,
+  currentStreamingText,
+  currentPhase2Text,
+  isStreaming,
+  phase,
+  error,
+  onSendMessage,
+  onCancel,
 }: ChatPanelProps) {
-  const [input, setInput] = useState('');
-  const [placeholderIndex, setPlaceholderIndex] = useState(0);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [input, setInput] = useState("");
+  const endRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // 자동 스크롤
   useEffect(() => {
-    const interval = setInterval(() => {
-      setPlaceholderIndex(prev => (prev + 1) % placeholders.length);
-    }, 4000);
-    return () => clearInterval(interval);
-  }, []);
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, currentStreamingText, currentPhase2Text]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (input.trim() && !isProcessing) {
-      onSendMessage(input.trim());
-      setInput('');
+    const t = input.trim();
+    if (!t || isStreaming) return;
+    onSendMessage(t);
+    setInput("");
+  };
+
+  const handleKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e);
     }
   };
 
-  const handleQuickCommand = (command: string) => {
-    if (!isProcessing) {
-      onSendMessage(command);
-    }
+  const phaseLabels: Record<string, string> = {
+    connecting: "연결 중...",
+    streaming_text: "응답 생성 중...",
+    tool_call_start: "문서 생성 시작...",
+    tool_call_streaming: "문서 작성 중...",
+    tool_call_complete: "문서 완료 ✓",
+    phase2_streaming: "확인 메시지...",
   };
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header with Status Chip */}
-      <div className="p-4 border-b border-border">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-              <Sparkles className="h-4 w-4 text-primary" />
-            </div>
-            <div>
-              <h3 className="text-sm font-medium text-foreground">무역비서에게 요청하기</h3>
-              <p className="text-xs text-muted-foreground">말로 수정하면 문서가 바로 바뀝니다.</p>
-            </div>
+    <div className="flex-1 flex flex-col min-w-0">
+      {/* 상단 헤더 */}
+      <header className="h-14 border-b border-gray-200 bg-white px-5 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 bg-gradient-to-br from-violet-500 to-purple-600 rounded-lg flex items-center justify-center">
+            <span className="text-white font-bold text-sm">F</span>
           </div>
-          {onOpenSettings && (
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onOpenSettings}>
-              <Settings className="h-4 w-4" />
-            </Button>
-          )}
+          <div>
+            <h1 className="text-sm font-semibold text-gray-900 leading-tight">FLONIX AI</h1>
+            <p className="text-[10px] text-gray-400">K-Beauty Export OS</p>
+          </div>
         </div>
-        
-        {/* Onboarding Status Chip */}
-        {onboardingContext && (
-          <div className="mt-3">
-            <OnboardingStatusChip
-              context={onboardingContext}
-              onOpenSettings={onOpenSettings}
-            />
+        {isStreaming && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 rounded-full">
+            <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+            <span className="text-[10px] text-blue-600 font-medium">
+              {phaseLabels[phase] || "처리 중..."}
+            </span>
           </div>
         )}
-      </div>
+      </header>
 
-      {/* Quick Chips */}
-      <div className="p-3 border-b border-border overflow-x-auto">
-        <div className="flex gap-2">
-          {quickCommands.map((command, index) => (
-            <button
-              key={index}
-              onClick={() => handleQuickCommand(command)}
-              disabled={isProcessing}
-              className="quick-chip whitespace-nowrap disabled:opacity-50"
-            >
-              {command.length > 15 ? command.substring(0, 15) + '...' : command}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center p-4">
-            <div className="p-4 rounded-full bg-primary/10 mb-4">
-              <Sparkles className="h-8 w-8 text-primary" />
-            </div>
-            <h3 className="text-lg font-medium text-foreground mb-2">
-              자료만 올리면, 바이어에게 보낼 준비 끝.
-            </h3>
-            <p className="text-sm text-muted-foreground max-w-[280px]">
-              회사소개서와 제품자료를 올려주세요. AI가 초안을 만들어드릴게요.
-            </p>
-          </div>
-        ) : (
-          messages.map((message) => (
-            <div
-              key={message.id}
-              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} fade-in-up`}
-            >
-              <div
-                className={`max-w-[85%] ${
-                  message.role === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai'
-                }`}
-              >
-                {message.isLoading ? (
-                  <div className="flex items-center gap-2">
-                    <div className="flex gap-1">
-                      <span className="w-2 h-2 bg-primary/60 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                      <span className="w-2 h-2 bg-primary/60 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                      <span className="w-2 h-2 bg-primary/60 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                    </div>
-                    <span className="text-sm text-muted-foreground">무역비서가 정리 중이에요…</span>
+      {/* 메시지 영역 */}
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+        {/* 웰컴 스크린 */}
+        {messages.length === 0 && !isStreaming && (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center max-w-sm">
+              <div className="w-14 h-14 bg-gradient-to-br from-violet-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <span className="text-white font-bold text-xl">F</span>
+              </div>
+              <h2 className="text-lg font-semibold text-gray-900 mb-1">
+                FLONIX AI Trade Assistant
+              </h2>
+              <p className="text-sm text-gray-500 mb-5">
+                K-뷰티 수출 서류, 규제 확인, 물류 견적까지 AI가 도와드립니다.
+              </p>
+              <div className="space-y-2 text-left text-sm">
+                {[
+                  { icon: "📄", text: "PI/CI/PL 무역 서류 자동 생성" },
+                  { icon: "🔍", text: "11개국 화장품 규제 컴플라이언스" },
+                  { icon: "🚢", text: "Incoterms, HS Code, 관세율 안내" },
+                ].map(({ icon, text }) => (
+                  <div key={text} className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg">
+                    <span>{icon}</span>
+                    <span className="text-gray-700">{text}</span>
                   </div>
-                ) : (
-                  <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 히스토리 메시지 */}
+        {messages.map((msg) =>
+          msg.role === "user" ? (
+            <div key={msg.id} className="flex justify-end">
+              <div className="bg-violet-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-[80%] text-sm">
+                {msg.content}
+              </div>
+            </div>
+          ) : (
+            <div key={msg.id} className="flex gap-2.5">
+              <AIAvatar />
+              <div className="flex-1 bg-white rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm border border-gray-100 max-w-[80%] text-sm text-gray-800 whitespace-pre-wrap">
+                {msg.content}
+              </div>
+            </div>
+          )
+        )}
+
+        {/* Phase 1 스트리밍 텍스트 */}
+        {isStreaming && currentStreamingText && (
+          <div className="flex gap-2.5">
+            <AIAvatar />
+            <div className="flex-1 bg-white rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm border border-gray-100 max-w-[80%]">
+              <div className="text-sm text-gray-800 whitespace-pre-wrap">
+                {currentStreamingText}
+                <span className="inline-block w-[2px] h-4 bg-violet-500 ml-0.5 animate-pulse" />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Phase 2 스트리밍 텍스트 */}
+        {currentPhase2Text && (
+          <div className="flex gap-2.5">
+            <AIAvatar />
+            <div className="flex-1 bg-white rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm border border-gray-100 max-w-[80%]">
+              <div className="text-sm text-gray-800 whitespace-pre-wrap">
+                {currentPhase2Text}
+                {phase === "phase2_streaming" && (
+                  <span className="inline-block w-[2px] h-4 bg-violet-500 ml-0.5 animate-pulse" />
                 )}
               </div>
             </div>
-          ))
+          </div>
         )}
-        <div ref={messagesEndRef} />
+
+        {/* Thinking 인디케이터 */}
+        {isStreaming &&
+          !currentStreamingText &&
+          !currentPhase2Text &&
+          phase !== "tool_call_streaming" && (
+            <div className="flex gap-2.5">
+              <AIAvatar />
+              <div className="bg-white rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm border border-gray-100">
+                <div className="flex gap-1 py-1">
+                  {[0, 1, 2].map((i) => (
+                    <div
+                      key={i}
+                      className="w-2 h-2 bg-gray-300 rounded-full animate-bounce"
+                      style={{ animationDelay: `${i * 150}ms` }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+        {/* 에러 */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+            <strong>오류:</strong> {error}
+          </div>
+        )}
+
+        <div ref={endRef} />
       </div>
 
-      {/* Input */}
-      <form onSubmit={handleSubmit} className="p-4 border-t border-border bg-card">
-        <div className="relative">
-          <input
-            type="text"
+      {/* 입력 영역 */}
+      <div className="border-t border-gray-200 bg-white px-5 py-3">
+        <form onSubmit={handleSubmit} className="flex gap-2 items-end">
+          <textarea
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={placeholders[placeholderIndex]}
-            disabled={isProcessing}
-            className="w-full pl-4 pr-12 py-3 rounded-xl bg-muted/30 border border-border text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 disabled:opacity-50"
+            onKeyDown={handleKey}
+            placeholder="무역 서류 작성, 규제 확인 등 무엇이든 물어보세요..."
+            className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent text-sm placeholder:text-gray-400"
+            rows={1}
+            style={{ minHeight: 42, maxHeight: 120 }}
+            disabled={isStreaming}
           />
-          <Button
-            type="submit"
-            size="icon"
-            disabled={!input.trim() || isProcessing}
-            className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 rounded-lg"
-          >
-            <Send className="h-4 w-4" />
-          </Button>
-        </div>
-        <p className="text-xs text-muted-foreground/70 mt-2 text-center">
-          ⓘ 한 번에 길게 말해도 좋아요. 중요한 조건만 포함하면 돼요.
-        </p>
-      </form>
+          {isStreaming ? (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-4 py-2.5 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors text-sm font-medium shrink-0"
+            >
+              중지
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={!input.trim()}
+              className="px-4 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-sm font-medium shrink-0"
+            >
+              전송
+            </button>
+          )}
+        </form>
+
+        {/* 퀵 액션 */}
+        {messages.length === 0 && !isStreaming && (
+          <div className="flex gap-2 mt-2.5 flex-wrap">
+            {[
+              "미국 수출용 PI 작성해줘",
+              "선크림 EU CPNP 규제 확인",
+              "FOB Busan CI 작성",
+            ].map((text) => (
+              <button
+                key={text}
+                onClick={() => {
+                  setInput(text);
+                  inputRef.current?.focus();
+                }}
+                className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-full text-xs text-gray-600 transition-colors"
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AIAvatar() {
+  return (
+    <div className="w-7 h-7 bg-gradient-to-br from-violet-500 to-purple-600 rounded-full flex items-center justify-center shrink-0 mt-0.5">
+      <span className="text-white font-bold text-[10px]">AI</span>
     </div>
   );
 }

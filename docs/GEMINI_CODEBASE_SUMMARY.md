@@ -475,7 +475,7 @@ serve(async (req) => {
   // Lovable AI Gateway 호출
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
+      model: "gemini-2.5-pro",
       messages: [{ role: "system", content: contextPrompt }, ...messages],
       stream: true,
     }),

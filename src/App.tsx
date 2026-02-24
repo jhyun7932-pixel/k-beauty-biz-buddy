@@ -74,7 +74,6 @@ const App = () => (
             <Route path="/crm" element={<Navigate to="/my-data" replace />} />
             <Route path="/documents" element={<Navigate to="/export-projects" replace />} />
             <Route path="/workspace" element={<Navigate to="/export-projects" replace />} />
-            <Route path="/compliance" element={<Navigate to="/export-projects" replace />} />
           </Route>
 
           {/* Admin Routes */}

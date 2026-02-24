@@ -22,13 +22,20 @@ export function useNotifications() {
 
     // Fetch existing
     const fetchNotifications = async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('notifications')
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(20);
 
+      // 테이블이 없거나(42P01) 권한 오류(PGRST116) 시 조용히 빈 상태 유지
+      if (error) {
+        if (error.code !== '42P01' && !error.message?.includes('does not exist')) {
+          console.warn('[useNotifications] fetch error:', error.message);
+        }
+        return;
+      }
       if (data) {
         setNotifications(data as unknown as Notification[]);
         setUnreadCount(data.filter((n: any) => !n.is_read).length);
@@ -60,16 +67,20 @@ export function useNotifications() {
   }, [user]);
 
   const markAsRead = async (id: string) => {
-    await supabase.from('notifications').update({ is_read: true }).eq('id', id);
-    setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, is_read: true } : n));
-    setUnreadCount((c) => Math.max(0, c - 1));
+    const { error } = await supabase.from('notifications').update({ is_read: true }).eq('id', id);
+    if (!error) {
+      setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, is_read: true } : n));
+      setUnreadCount((c) => Math.max(0, c - 1));
+    }
   };
 
   const markAllAsRead = async () => {
     if (!user) return;
-    await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('is_read', false);
-    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-    setUnreadCount(0);
+    const { error } = await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('is_read', false);
+    if (!error) {
+      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+      setUnreadCount(0);
+    }
   };
 
   return { notifications, unreadCount, markAsRead, markAllAsRead };
