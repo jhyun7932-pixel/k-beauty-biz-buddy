@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Backup files
+*.bak
+
+# Supabase CLI temp files
+supabase/.temp/
