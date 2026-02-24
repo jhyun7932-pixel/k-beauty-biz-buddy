@@ -99,6 +99,37 @@ export function useStreamingChat() {
         if (currentState.phase !== "complete" && currentState.phase !== "error") {
           store.completeStreaming();
         }
+
+        // 채팅 히스토리 DB 저장 (실패해도 채팅 기능에 영향 없음)
+        try {
+          const finalState = useStreamingStore.getState();
+          const assistantContent = [
+            finalState.currentStreamingText,
+            finalState.currentPhase2Text,
+          ]
+            .filter(Boolean)
+            .join("\n\n")
+            .trim();
+
+          if (finalState.phase === "complete" && assistantContent) {
+            await supabase.from("ai_chat_messages").insert([
+              {
+                user_id: session.user.id,
+                role: "user",
+                content: message,
+                is_doc_output: false,
+              },
+              {
+                user_id: session.user.id,
+                role: "assistant",
+                content: assistantContent,
+                is_doc_output: finalState.rightPanelOpen,
+              },
+            ]);
+          }
+        } catch {
+          // DB 저장 실패 무시 — 채팅 기능에 영향 없음
+        }
       } catch (err) {
         if ((err as Error).name === "AbortError") {
           store.reset();
