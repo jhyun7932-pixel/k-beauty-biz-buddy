@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Plus, Trash2, Building2, MapPin, Phone, User, Package, Weight, Box, Upload, Loader2, FlaskConical, ImageIcon, Mail, Globe, ExternalLink, DollarSign, Tag, Pencil, Save } from 'lucide-react';
+import { Plus, Trash2, Building2, MapPin, Phone, User, Package, Weight, Box, Upload, Loader2, FlaskConical, ImageIcon, Mail, Globe, ExternalLink, DollarSign, Tag, Pencil, Save, Link2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,18 +17,42 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { useAppStore } from '@/stores/appStore';
-import { COUNTRY_NAMES } from '@/stores/types';
-import type { TargetCountry } from '@/stores/types';
 import { getExportableCountries, RULEPACK_DATA } from '@/data/complianceRulePacks';
 import { getKoreanName, formatIngredientDisplay } from '@/lib/compliance/inciKoreanMap';
 import { supabase } from '@/integrations/supabase/client';
 import { useProducts } from '@/hooks/useProducts';
 import { useBuyers } from '@/hooks/useBuyers';
+import { useAllBuyerProducts } from '@/hooks/useBuyerProducts';
+import { BUYER_COUNTRY_OPTIONS, getBuyerCountryDisplay } from '@/lib/countryFlags';
 import { toast } from 'sonner';
 
-const COUNTRY_OPTIONS: { value: TargetCountry; label: string }[] = Object.entries(COUNTRY_NAMES).map(
-  ([code, name]) => ({ value: code as TargetCountry, label: `${name} (${code})` })
-);
+const CHANNEL_TYPE_OPTIONS = [
+  { value: 'online', label: '온라인' },
+  { value: 'offline', label: '오프라인' },
+  { value: 'wholesale', label: '도매' },
+  { value: 'direct', label: 'D2C' },
+];
+
+const PAYMENT_TERMS_OPTIONS = [
+  { value: 'tt', label: 'T/T (전신환)' },
+  { value: 'lc', label: 'L/C (신용장)' },
+  { value: 'other', label: '기타' },
+];
+
+const CURRENCY_OPTIONS = [
+  { value: 'USD', label: '$ USD' },
+  { value: 'EUR', label: '€ EUR' },
+  { value: 'JPY', label: '¥ JPY' },
+  { value: 'CNY', label: '¥ CNY' },
+  { value: 'KRW', label: '₩ KRW' },
+];
+
+const BUYER_TYPE_OPTIONS = [
+  { value: 'importer', label: '수입사' },
+  { value: 'distributor', label: '유통사' },
+  { value: 'retailer', label: '리테일러' },
+  { value: 'reseller', label: '마켓 셀러' },
+];
 
 export default function MyDataPage() {
   const [searchParams] = useSearchParams();
@@ -40,13 +64,20 @@ export default function MyDataPage() {
   const { buyers, loading: buyersLoading, createBuyer, deleteBuyer } = useBuyers();
   const { productEntries, updateProductEntry, removeProductEntry } = useAppStore();
   const { loadProducts, saveProduct, updateProduct, deleteProduct } = useProducts();
+  const { map: buyerProductMap, productMap, linkProduct, unlinkProduct, fetchAll: refetchBuyerProducts } = useAllBuyerProducts();
   const [productsLoaded, setProductsLoaded] = useState(false);
   const [buyerDialogOpen, setBuyerDialogOpen] = useState(false);
   const [buyerSaving, setBuyerSaving] = useState(false);
   const [buyerForm, setBuyerForm] = useState({
-    companyName: '', country: '' as string, address: '',
+    companyName: '', country: '' as string,
     contactName: '', contactPhone: '', contactEmail: '',
+    buyerType: '', channelType: '', paymentTerms: '', currency: '',
+    notes: '',
   });
+
+  // 제품 연결 다이얼로그
+  const [linkDialogBuyerId, setLinkDialogBuyerId] = useState<string | null>(null);
+  const linkDialogBuyer = buyers.find(b => b.id === linkDialogBuyerId) || null;
 
   const handleSaveBuyer = async () => {
     if (!buyerForm.companyName || !buyerForm.country) return;
@@ -57,14 +88,18 @@ export default function MyDataPage() {
       contact_name: buyerForm.contactName || null,
       contact_email: buyerForm.contactEmail || null,
       contact_phone: buyerForm.contactPhone || null,
-      notes: buyerForm.address || null,
+      buyer_type: buyerForm.buyerType || null,
+      channel_type: buyerForm.channelType || null,
+      payment_terms: buyerForm.paymentTerms || null,
+      currency: buyerForm.currency || null,
+      notes: buyerForm.notes || null,
     });
     setBuyerSaving(false);
     if (error) {
       toast.error('바이어 등록에 실패했습니다.');
       return;
     }
-    setBuyerForm({ companyName: '', country: '', address: '', contactName: '', contactPhone: '', contactEmail: '' });
+    setBuyerForm({ companyName: '', country: '', contactName: '', contactPhone: '', contactEmail: '', buyerType: '', channelType: '', paymentTerms: '', currency: '', notes: '' });
     setBuyerDialogOpen(false);
     toast.success('바이어가 등록되었습니다.');
   };
@@ -112,7 +147,6 @@ export default function MyDataPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Simulated INCI extraction (실제 OCR 호출 후 fallback 시뮬레이션)
   const MOCK_INCI = [
     'Water', 'Glycerin', 'Butylene Glycol', 'Niacinamide', 'Sodium Hyaluronate',
     'Centella Asiatica Extract', 'Panthenol', 'Allantoin', 'Carbomer',
@@ -150,12 +184,8 @@ export default function MyDataPage() {
         );
         if (response.ok) {
           const data = await response.json();
-          ingredients = (data.ingredients || []).map((ing: any) => {
-            const nameKr = ing.nameKr || getKoreanName(ing.name);
-            return `${ing.name}`;
-          });
-          // Store Korean display separately for toast
-          const krDisplay = (data.ingredients || []).map((ing: any) => 
+          ingredients = (data.ingredients || []).map((ing: any) => `${ing.name}`);
+          const krDisplay = (data.ingredients || []).map((ing: any) =>
             formatIngredientDisplay(ing.name, ing.nameKr)
           );
           if (krDisplay.length > 0) {
@@ -166,9 +196,7 @@ export default function MyDataPage() {
         // Fallback to simulation
       }
 
-      // 시뮬레이션 fallback: 실제 OCR 결과 없을 때
       if (ingredients.length === 0) {
-        // Simulate progressive typing effect
         await new Promise(r => setTimeout(r, 800));
         ingredients = MOCK_INCI;
       }
@@ -187,12 +215,8 @@ export default function MyDataPage() {
     if (!productForm.productName || !productForm.skuCode) return;
 
     const dbId = await saveProduct({ ...productForm, inciText });
-    if (!dbId) {
-      // saveProduct 내부에서 이미 toast.error 표시
-      return;
-    }
+    if (!dbId) return;
 
-    // DB 저장 성공 → 로컬 스토어에도 반영 (화면 즉시 갱신)
     useAppStore.setState(s => ({
       productEntries: [...s.productEntries, {
         ...productForm,
@@ -202,7 +226,6 @@ export default function MyDataPage() {
       }],
     }));
 
-    // INCI 성분 별도 테이블에도 저장
     if (inciText.trim()) {
       try {
         const { data: { user } } = await supabase.auth.getUser();
@@ -278,43 +301,101 @@ export default function MyDataPage() {
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {buyers.map(b => (
-                  <Card key={b.id} className="group relative hover:shadow-md transition-shadow">
-                    <CardContent className="p-5 space-y-3">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Building2 className="h-5 w-5 text-primary flex-shrink-0" />
-                          <span className="font-semibold text-sm truncate">{b.company_name}</span>
+                {buyers.map(b => {
+                  const linkedPids = buyerProductMap[b.id] || [];
+                  const linkedProducts = productEntries.filter(p => linkedPids.includes(p.id));
+                  return (
+                    <Card key={b.id} className="group relative hover:shadow-md transition-shadow">
+                      <CardContent className="p-5 space-y-3">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Building2 className="h-5 w-5 text-primary flex-shrink-0" />
+                            <span className="font-semibold text-sm truncate">{b.company_name}</span>
+                          </div>
+                          <Badge variant="outline" className="text-xs flex-shrink-0 ml-2">
+                            {getBuyerCountryDisplay(b.country)}
+                          </Badge>
                         </div>
-                        <Badge variant="outline" className="text-xs flex-shrink-0 ml-2">{b.country}</Badge>
-                      </div>
-                      {b.notes && (
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <MapPin className="h-3 w-3 flex-shrink-0" />
-                          <span className="truncate">{b.notes}</span>
+
+                        {/* 바이어 타입 / 채널 */}
+                        <div className="flex flex-wrap gap-1">
+                          {b.buyer_type && (
+                            <Badge variant="secondary" className="text-[10px]">
+                              {BUYER_TYPE_OPTIONS.find(o => o.value === b.buyer_type)?.label || b.buyer_type}
+                            </Badge>
+                          )}
+                          {b.channel_type && (
+                            <Badge variant="outline" className="text-[10px]">
+                              {CHANNEL_TYPE_OPTIONS.find(o => o.value === b.channel_type)?.label || b.channel_type}
+                            </Badge>
+                          )}
+                          {b.currency && (
+                            <Badge variant="outline" className="text-[10px] font-mono">{b.currency}</Badge>
+                          )}
                         </div>
-                      )}
-                      {b.contact_name && (
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <User className="h-3 w-3 flex-shrink-0" /> {b.contact_name}
+
+                        {b.contact_name && (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <User className="h-3 w-3 flex-shrink-0" /> {b.contact_name}
+                          </div>
+                        )}
+                        {b.contact_email && (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Mail className="h-3 w-3 flex-shrink-0" />
+                            <span className="truncate">{b.contact_email}</span>
+                          </div>
+                        )}
+
+                        {/* 연결된 제품 섹션 */}
+                        <div className="border-t border-border pt-2">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                              <Link2 className="h-3 w-3" />
+                              연결 제품 {linkedProducts.length > 0 ? `(${linkedProducts.length})` : ''}
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 px-1.5 text-[10px] text-primary"
+                              onClick={() => setLinkDialogBuyerId(b.id)}
+                            >
+                              <Plus className="h-2.5 w-2.5 mr-0.5" /> 연결
+                            </Button>
+                          </div>
+                          {linkedProducts.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {linkedProducts.slice(0, 3).map(p => (
+                                <Badge
+                                  key={p.id}
+                                  variant="outline"
+                                  className="text-[10px] px-1.5 bg-primary/5 border-primary/20 text-primary cursor-pointer"
+                                  onClick={() => setLinkDialogBuyerId(b.id)}
+                                >
+                                  📦 {p.productName}
+                                </Badge>
+                              ))}
+                              {linkedProducts.length > 3 && (
+                                <Badge variant="secondary" className="text-[10px]">
+                                  +{linkedProducts.length - 3}
+                                </Badge>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-[10px] text-muted-foreground/60">연결된 제품 없음</p>
+                          )}
                         </div>
-                      )}
-                      {b.contact_email && (
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <Mail className="h-3 w-3 flex-shrink-0" />
-                          <span className="truncate">{b.contact_email}</span>
-                        </div>
-                      )}
-                      <Button
-                        variant="ghost" size="icon"
-                        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-7 w-7 text-destructive"
-                        onClick={() => deleteBuyer(b.id)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </CardContent>
-                  </Card>
-                ))}
+
+                        <Button
+                          variant="ghost" size="icon"
+                          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-7 w-7 text-destructive"
+                          onClick={() => deleteBuyer(b.id)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -347,6 +428,8 @@ export default function MyDataPage() {
                 {productEntries.map(p => {
                   const exportable = getExportableCountries(p.inciText || '');
                   const hasInci = !!p.inciText?.trim();
+                  const linkedBuyerIds = productMap[p.id] || [];
+                  const linkedBuyers = buyers.filter(b => linkedBuyerIds.includes(b.id));
                   return (
                     <Card key={p.id} className="group relative hover:shadow-md transition-shadow cursor-pointer" onClick={() => setSelectedProduct(p)}>
                       <CardContent className="p-5 space-y-3">
@@ -374,7 +457,6 @@ export default function MyDataPage() {
                               <FlaskConical className="h-3 w-3 flex-shrink-0" />
                               <span>INCI 등록됨 ({p.inciText!.split(',').filter(s=>s.trim()).length}종)</span>
                             </div>
-                            {/* 수출 가능 국가 배지 */}
                             <div>
                               <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1.5">
                                 <Globe className="h-3 w-3" />
@@ -405,6 +487,26 @@ export default function MyDataPage() {
                             ⚠️ INCI 미등록 — 제품 수정에서 성분을 입력하세요
                           </div>
                         )}
+
+                        {/* 연결된 바이어 */}
+                        {linkedBuyers.length > 0 && (
+                          <div className="border-t border-border pt-2">
+                            <p className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
+                              <Link2 className="h-2.5 w-2.5" /> 연결 바이어
+                            </p>
+                            <div className="flex flex-wrap gap-1">
+                              {linkedBuyers.slice(0, 2).map(b => (
+                                <Badge key={b.id} variant="outline" className="text-[10px] px-1.5">
+                                  🏢 {b.company_name}
+                                </Badge>
+                              ))}
+                              {linkedBuyers.length > 2 && (
+                                <Badge variant="secondary" className="text-[10px]">+{linkedBuyers.length - 2}</Badge>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
                         <Button
                           variant="ghost" size="icon"
                           className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-7 w-7 text-destructive"
@@ -425,46 +527,96 @@ export default function MyDataPage() {
       {/* Hidden file input */}
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
 
-      {/* Buyer Dialog */}
+      {/* ── Buyer Dialog ── */}
       <Dialog open={buyerDialogOpen} onOpenChange={setBuyerDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>바이어 추가</DialogTitle>
             <DialogDescription>수출 대상 바이어 정보를 입력하세요.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div>
-              <Label>회사명 (영문) *</Label>
-              <Input placeholder="e.g. Tokyo Beauty Inc." value={buyerForm.companyName} onChange={e => setBuyerForm({ ...buyerForm, companyName: e.target.value })} />
-            </div>
-            <div>
-              <Label>국가 *</Label>
-              <Select value={buyerForm.country} onValueChange={v => setBuyerForm({ ...buyerForm, country: v })}>
-                <SelectTrigger><SelectValue placeholder="국가 선택" /></SelectTrigger>
-                <SelectContent>
-                  {COUNTRY_OPTIONS.map(c => (
-                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>주소</Label>
-              <Input placeholder="Address" value={buyerForm.address} onChange={e => setBuyerForm({ ...buyerForm, address: e.target.value })} />
-            </div>
-            <div>
-              <Label>담당자명</Label>
-              <Input placeholder="Contact Name" value={buyerForm.contactName} onChange={e => setBuyerForm({ ...buyerForm, contactName: e.target.value })} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <Label>회사명 (영문) *</Label>
+                <Input placeholder="e.g. Tokyo Beauty Inc." value={buyerForm.companyName} onChange={e => setBuyerForm({ ...buyerForm, companyName: e.target.value })} className="mt-1" />
+              </div>
               <div>
-                <Label>전화번호</Label>
-                <Input placeholder="+81-..." value={buyerForm.contactPhone} onChange={e => setBuyerForm({ ...buyerForm, contactPhone: e.target.value })} />
+                <Label>국가 *</Label>
+                <Select value={buyerForm.country} onValueChange={v => setBuyerForm({ ...buyerForm, country: v })}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="국가 선택" /></SelectTrigger>
+                  <SelectContent>
+                    {BUYER_COUNTRY_OPTIONS.map(c => (
+                      <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>바이어 타입</Label>
+                <Select value={buyerForm.buyerType} onValueChange={v => setBuyerForm({ ...buyerForm, buyerType: v })}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="타입 선택" /></SelectTrigger>
+                  <SelectContent>
+                    {BUYER_TYPE_OPTIONS.map(o => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>채널 유형</Label>
+                <Select value={buyerForm.channelType} onValueChange={v => setBuyerForm({ ...buyerForm, channelType: v })}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="채널 선택" /></SelectTrigger>
+                  <SelectContent>
+                    {CHANNEL_TYPE_OPTIONS.map(o => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>결제 조건</Label>
+                <Select value={buyerForm.paymentTerms} onValueChange={v => setBuyerForm({ ...buyerForm, paymentTerms: v })}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="결제 방식" /></SelectTrigger>
+                  <SelectContent>
+                    {PAYMENT_TERMS_OPTIONS.map(o => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>거래 통화</Label>
+                <Select value={buyerForm.currency} onValueChange={v => setBuyerForm({ ...buyerForm, currency: v })}>
+                  <SelectTrigger className="mt-1"><SelectValue placeholder="통화 선택" /></SelectTrigger>
+                  <SelectContent>
+                    {CURRENCY_OPTIONS.map(o => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <Separator />
+            <p className="text-xs font-semibold text-foreground">담당자 정보</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label>담당자명</Label>
+                <Input placeholder="Contact Name" value={buyerForm.contactName} onChange={e => setBuyerForm({ ...buyerForm, contactName: e.target.value })} className="mt-1" />
               </div>
               <div>
                 <Label>이메일</Label>
-                <Input type="email" placeholder="email@example.com" value={buyerForm.contactEmail} onChange={e => setBuyerForm({ ...buyerForm, contactEmail: e.target.value })} />
+                <Input type="email" placeholder="email@example.com" value={buyerForm.contactEmail} onChange={e => setBuyerForm({ ...buyerForm, contactEmail: e.target.value })} className="mt-1" />
               </div>
+              <div className="md:col-span-2">
+                <Label>전화번호</Label>
+                <Input placeholder="+81-..." value={buyerForm.contactPhone} onChange={e => setBuyerForm({ ...buyerForm, contactPhone: e.target.value })} className="mt-1" />
+              </div>
+            </div>
+
+            <div>
+              <Label>메모</Label>
+              <Textarea placeholder="바이어에 대한 추가 정보나 특이사항..." value={buyerForm.notes} onChange={e => setBuyerForm({ ...buyerForm, notes: e.target.value })} className="mt-1 min-h-[60px]" />
             </div>
           </div>
           <DialogFooter>
@@ -477,7 +629,58 @@ export default function MyDataPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Product Dialog */}
+      {/* ── 제품 연결 다이얼로그 ── */}
+      <Dialog open={!!linkDialogBuyerId} onOpenChange={(open) => !open && setLinkDialogBuyerId(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Link2 className="h-4 w-4 text-primary" />
+              제품 연결 — {linkDialogBuyer?.company_name}
+            </DialogTitle>
+            <DialogDescription>바이어와 연결할 제품을 선택하세요.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-72 overflow-y-auto py-2">
+            {productEntries.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">등록된 제품이 없습니다.</p>
+            ) : productEntries.map(p => {
+              const isLinked = (buyerProductMap[linkDialogBuyerId || ''] || []).includes(p.id);
+              return (
+                <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Package className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{p.productName}</p>
+                      <p className="text-xs text-muted-foreground">{p.skuCode} · ${p.unitPrice.toFixed(2)}</p>
+                    </div>
+                  </div>
+                  <Button
+                    variant={isLinked ? 'destructive' : 'outline'}
+                    size="sm"
+                    className="h-7 text-xs flex-shrink-0 ml-2"
+                    onClick={() => {
+                      if (!linkDialogBuyerId) return;
+                      if (isLinked) {
+                        unlinkProduct(linkDialogBuyerId, p.id);
+                        toast.success(`${p.productName} 연결 해제`);
+                      } else {
+                        linkProduct(linkDialogBuyerId, p.id);
+                        toast.success(`${p.productName} 연결 완료`);
+                      }
+                    }}
+                  >
+                    {isLinked ? <><X className="h-3 w-3 mr-1" />해제</> : <><Plus className="h-3 w-3 mr-1" />연결</>}
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setLinkDialogBuyerId(null)}>완료</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Product Dialog ── */}
       <Dialog open={productDialogOpen} onOpenChange={setProductDialogOpen}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -536,7 +739,7 @@ export default function MyDataPage() {
                       <p className="text-xs text-muted-foreground mt-0.5">전성분 라벨을 인식하고 있습니다</p>
                     </div>
                     <div className="w-full max-w-[200px] h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div 
+                      <div
                         className="h-full bg-primary rounded-full transition-all duration-1000"
                         style={{ width: `${Math.min((ocrElapsed / 30) * 100, 95)}%` }}
                       />
@@ -569,7 +772,6 @@ export default function MyDataPage() {
                     </span>
                   )}
                 </div>
-                {/* Korean name preview */}
                 {inciText && (
                   <div className="mb-2 p-2 rounded-lg bg-muted/30 border border-border">
                     <p className="text-[10px] text-muted-foreground mb-1 font-medium">🇰🇷 한글 표기 확인</p>
@@ -626,7 +828,7 @@ export default function MyDataPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Product Detail Slide-Over */}
+      {/* ── Product Detail Slide-Over ── */}
       <Sheet open={!!selectedProduct} onOpenChange={(open) => { if (!open) { setSelectedProduct(null); setIsEditing(false); } }}>
         <SheetContent className="w-full sm:max-w-md overflow-y-auto">
           {selectedProduct && (() => {
@@ -634,6 +836,8 @@ export default function MyDataPage() {
             const categoryLabel = p.category && CATEGORY_HS_MAP[p.category] ? CATEGORY_HS_MAP[p.category].label : null;
             const inciList = (isEditing ? editForm.inciText : p.inciText)?.split(',').map((s: string) => s.trim()).filter(Boolean) || [];
             const exportable = getExportableCountries(p.inciText || '');
+            const linkedBuyerIds = productMap[p.id] || [];
+            const linkedBuyers = buyers.filter(b => linkedBuyerIds.includes(b.id));
 
             const startEditing = () => {
               setEditForm({
@@ -826,6 +1030,43 @@ export default function MyDataPage() {
                           onClick={() => { setSelectedProduct(null); navigate('/compliance'); }}>
                           <ExternalLink className="h-3 w-3" /> 규제 체크리스트에서 확인
                         </Button>
+                      </div>
+                    </>
+                  )}
+
+                  {/* 연결된 바이어 섹션 */}
+                  {!isEditing && (
+                    <>
+                      <Separator />
+                      <div className="space-y-3">
+                        <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                          <Link2 className="h-4 w-4" /> 연결된 바이어
+                        </h4>
+                        {linkedBuyers.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">연결된 바이어가 없습니다.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {linkedBuyers.map(b => (
+                              <div key={b.id} className="flex items-center justify-between p-2.5 rounded-lg bg-muted/30 border border-border">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <Building2 className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-medium truncate">{b.company_name}</p>
+                                    <p className="text-[10px] text-muted-foreground">{getBuyerCountryDisplay(b.country)}</p>
+                                  </div>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 text-destructive flex-shrink-0"
+                                  onClick={() => unlinkProduct(b.id, p.id)}
+                                >
+                                  <X className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </>
                   )}

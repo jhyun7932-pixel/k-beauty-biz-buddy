@@ -1,4 +1,4 @@
-// FLONIX Trade Assistant v2.0 - 단일 스트리밍 파이프라인
+// FLONIX Trade Assistant v2.1 - get_user_context 멀티턴 지원
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -23,9 +23,14 @@ const SYSTEM_PROMPT = `당신은 FLONIX의 AI 무역 어시스턴트입니다. K
 - 정확성: 무역 용어, HS Code, Incoterms는 정확히 사용
 
 [Function Calling 규칙]
+- 사용자 데이터 필요 시 → get_user_context 호출 (바이어/제품 정보 자동 조회)
 - 무역 서류 생성 → generate_trade_document 호출
 - 규제 체크 → check_compliance 호출
 - 단순 질문 → 텍스트로 직접 응답
+
+[get_user_context 사용 규칙]
+- 사용자가 "내 바이어", "등록된 제품", "일본 바이어에게 PI 작성" 등 개인 데이터 기반 요청 시 먼저 호출
+- 반환된 buyers/products 정보를 활용해 generate_trade_document를 실제 데이터로 채워넣기
 
 [NDA 생성 규칙]
 document_type="NDA"로 generate_trade_document 호출 시:
@@ -58,6 +63,16 @@ FAIL/CAUTION 항목이 없으면 overall_status를 "PASS"로, 하나라도 있�
 
 const TOOLS = [{
   functionDeclarations: [{
+    name: "get_user_context",
+    description: "사용자의 등록된 바이어, 제품, 회사 프로필 정보를 조회합니다. 개인 데이터 기반 문서 작성 시 먼저 호출하세요.",
+    parameters: {
+      type: "object",
+      properties: {
+        include_buyers: { type: "boolean", description: "바이어 목록 포함 여부 (기본 true)" },
+        include_products: { type: "boolean", description: "제품 목록 포함 여부 (기본 true)" },
+      },
+    }
+  }, {
     name: "generate_trade_document",
     description: "PI/CI/PL 등 무역 서류를 생성합니다.",
     parameters: {
@@ -228,6 +243,52 @@ async function saveMsg(
   });
 }
 
+/** 사용자의 바이어, 제품, 프로필 정보를 DB에서 조회 */
+async function fetchUserContext(sb: ReturnType<typeof createClient>, userId: string) {
+  const [profileRes, buyersRes, productsRes] = await Promise.all([
+    sb.from("profiles")
+      .select("company_name, contact_name, contact_email, contact_phone, address")
+      .eq("id", userId)
+      .single(),
+    sb.from("buyers")
+      .select("company_name, country, channel, buyer_type, contact_name, contact_email, status_stage")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(15),
+    sb.from("products")
+      .select("name_en, category, sku_code, hs_code, unit_price_range, size_ml_g")
+      .eq("user_id", userId)
+      .eq("status", "active")
+      .limit(15),
+  ]);
+
+  const buyers = (buyersRes.data || []).map((b: any) => ({
+    company_name: b.company_name,
+    country: b.country,
+    channel: b.channel,
+    buyer_type: b.buyer_type,
+    contact_name: b.contact_name,
+    contact_email: b.contact_email,
+    status: b.status_stage,
+  }));
+
+  const products = (productsRes.data || []).map((p: any) => ({
+    name: p.name_en,
+    category: p.category,
+    sku: p.sku_code,
+    hs_code: p.hs_code,
+    unit_price_usd: p.unit_price_range?.base ?? null,
+    size_ml_g: p.size_ml_g,
+  }));
+
+  return {
+    profile: profileRes.data || {},
+    buyers,
+    products,
+    summary: `등록된 바이어 ${buyers.length}개, 제품 ${products.length}개`,
+  };
+}
+
 Deno.serve(async (req) => {
   // CORS
   if (req.method === "OPTIONS") {
@@ -268,82 +329,120 @@ Deno.serve(async (req) => {
         try {
           push({ type: "stream_start", data: { ts: Date.now() } });
 
-          // Phase 1: 단일 스트리밍 (tools 포함)
-          const r1 = await geminiStream(gHist, true);
-          if (!r1.ok || !r1.body) {
-            push({ type: "error", data: { message: `Gemini Error: ${await r1.text()}` } });
-            ctrl.close();
-            return;
-          }
-
-          const reader = r1.body.getReader();
-          const dec = new TextDecoder();
-          let buf = "", fullText = "";
+          // Phase 1: 멀티턴 루프 (get_user_context 처리)
+          let currentMessages = [...gHist];
           let hasFn = false, fnName = "", fnArgs = "";
+          let fullText = "";
+          const dec = new TextDecoder();
+          const MAX_CONTEXT_LOOPS = 3;
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buf += dec.decode(value, { stream: true });
-            const lines = buf.split("\n");
-            buf = lines.pop() || "";
+          for (let loop = 0; loop < MAX_CONTEXT_LOOPS; loop++) {
+            const r1 = await geminiStream(currentMessages, true);
+            if (!r1.ok || !r1.body) {
+              push({ type: "error", data: { message: `Gemini Error: ${await r1.text()}` } });
+              ctrl.close();
+              return;
+            }
 
-            for (const line of lines) {
-              const t = line.trim();
-              if (!t || t === "data: [DONE]") continue;
-              const ch = parseGeminiLine(t);
-              if (!ch) continue;
+            const reader = r1.body.getReader();
+            let buf = "";
+            hasFn = false; fnName = ""; fnArgs = ""; fullText = "";
 
-              switch (ch.kind) {
-                case "text":
-                  fullText += ch.text || "";
-                  push({ type: "text_delta", data: { content: ch.text } });
-                  break;
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buf += dec.decode(value, { stream: true });
+              const lines = buf.split("\n");
+              buf = lines.pop() || "";
 
-                case "function_call": {
-                  hasFn = true;
-                  fnName = ch.fnName || "";
-                  fnArgs = ch.fnArgs || "";
+              for (const line of lines) {
+                const t = line.trim();
+                if (!t || t === "data: [DONE]") continue;
+                const ch = parseGeminiLine(t);
+                if (!ch) continue;
 
-                  // 1) 패널 열기 신호
-                  push({ type: "tool_call_start", data: { name: fnName } });
+                switch (ch.kind) {
+                  case "text":
+                    fullText += ch.text || "";
+                    push({ type: "text_delta", data: { content: ch.text } });
+                    break;
 
-                  // 2) Arguments 청크 분할 전송 (Progressive Rendering용)
-                  if (fnArgs) {
-                    const SZ = 120;
-                    for (let i = 0; i < fnArgs.length; i += SZ) {
+                  case "function_call": {
+                    hasFn = true;
+                    fnName = ch.fnName || "";
+                    fnArgs = ch.fnArgs || "";
+
+                    if (fnName !== "get_user_context") {
+                      // 문서 생성 / 컴플라이언스 fn → 패널 열기 신호 + delta 전송
+                      push({ type: "tool_call_start", data: { name: fnName } });
+
+                      if (fnArgs) {
+                        const SZ = 120;
+                        for (let i = 0; i < fnArgs.length; i += SZ) {
+                          push({
+                            type: "tool_call_delta",
+                            data: {
+                              name: fnName,
+                              arguments_chunk: fnArgs.slice(i, i + SZ),
+                              chunk_index: Math.floor(i / SZ),
+                              is_last: (i + SZ) >= fnArgs.length,
+                            },
+                          });
+                        }
+                      }
+
                       push({
-                        type: "tool_call_delta",
-                        data: {
-                          name: fnName,
-                          arguments_chunk: fnArgs.slice(i, i + SZ),
-                          chunk_index: Math.floor(i / SZ),
-                          is_last: (i + SZ) >= fnArgs.length,
-                        },
+                        type: "tool_call_end",
+                        data: { name: fnName, arguments_complete: fnArgs },
                       });
                     }
+                    break;
                   }
-
-                  // 3) 완료 신호
-                  push({
-                    type: "tool_call_end",
-                    data: { name: fnName, arguments_complete: fnArgs },
-                  });
-                  break;
                 }
               }
             }
+
+            // get_user_context 호출이면 → DB 조회 후 응답 주입 후 루프 재실행
+            if (hasFn && fnName === "get_user_context") {
+              push({ type: "context_loading", data: { message: "사용자 데이터 조회 중..." } });
+              const ctxData = await fetchUserContext(sb, user.id);
+
+              let parsedArgs: Record<string, unknown> = {};
+              try { parsedArgs = JSON.parse(fnArgs); } catch { /* ignore */ }
+
+              currentMessages = [
+                ...currentMessages,
+                {
+                  role: "model",
+                  parts: [{ functionCall: { name: "get_user_context", args: parsedArgs } }],
+                },
+                {
+                  role: "user",
+                  parts: [{
+                    functionResponse: {
+                      name: "get_user_context",
+                      response: ctxData,
+                    },
+                  }],
+                },
+              ];
+              // 루프 계속 (이제 Gemini가 실제 데이터로 문서 생성 fn 호출)
+              continue;
+            }
+
+            // get_user_context가 아닌 fn 또는 텍스트만 있으면 루프 종료
+            break;
           }
 
-          // Phase 2: Function Call 후 확인 메시지
-          if (hasFn) {
+          // Phase 2: Function Call 후 확인 메시지 (generate_trade_document / check_compliance)
+          if (hasFn && fnName !== "get_user_context") {
             push({ type: "phase2_start", data: { functionName: fnName } });
 
             let parsedArgs: Record<string, unknown> = {};
             try { parsedArgs = JSON.parse(fnArgs); } catch { /* ignore */ }
 
             const p2Msgs = [
-              ...gHist,
+              ...currentMessages,
               {
                 role: "model",
                 parts: [{ functionCall: { name: fnName, args: parsedArgs } }],

@@ -13,6 +13,9 @@ export interface Buyer {
   website: string | null;
   channel: string | null;
   buyer_type: string | null;
+  channel_type: string | null;
+  payment_terms: string | null;
+  currency: string | null;
   notes: string | null;
   status_stage: string | null;
   rating: number | null;
@@ -79,6 +82,9 @@ export function useBuyers() {
       website: buyerData.website ?? null,
       channel: buyerData.channel ?? null,
       buyer_type: buyerData.buyer_type ?? null,
+      channel_type: buyerData.channel_type ?? null,
+      payment_terms: buyerData.payment_terms ?? null,
+      currency: buyerData.currency ?? null,
       notes: buyerData.notes ?? null,
     };
 

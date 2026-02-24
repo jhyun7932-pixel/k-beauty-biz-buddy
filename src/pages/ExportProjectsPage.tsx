@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Plus, FileText, Calendar, Trash2, MoreVertical, ChevronRight, Download, FileDown, History, Clock } from 'lucide-react';
+import { Plus, FileText, Calendar, Trash2, MoreVertical, ChevronRight, Download, FileDown, History, Clock, Building2, Package, CheckSquare, Square, ChevronLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +13,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { useProjectStore, PIPELINE_STAGES, type PipelineStage, type Project } from '@/stores/projectStore';
+import { useBuyers } from '@/hooks/useBuyers';
+import { useAppStore } from '@/stores/appStore';
+import { getBuyerCountryDisplay } from '@/lib/countryFlags';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -610,20 +613,259 @@ function DropColumn({ stage, projects, onCardClick, onStageChange, onDelete }: D
 }
 
 // ──────────────────────────────────────────────────────────
+// 3-Step Project Creation Wizard
+// ──────────────────────────────────────────────────────────
+interface WizardState {
+  step: 1 | 2 | 3;
+  buyerId: string;
+  buyerName: string;
+  selectedProductIds: string[];
+  stage: PipelineStage;
+  customName: string;
+}
+
+const WIZARD_INITIAL: WizardState = {
+  step: 1,
+  buyerId: '',
+  buyerName: '',
+  selectedProductIds: [],
+  stage: '첫 제안 진행',
+  customName: '',
+};
+
+function CreateProjectWizard({ onClose, onCreate }: {
+  onClose: () => void;
+  onCreate: (name: string, stage: PipelineStage) => void;
+}) {
+  const { buyers } = useBuyers();
+  const { productEntries } = useAppStore();
+  const [wizard, setWizard] = useState<WizardState>(WIZARD_INITIAL);
+
+  const autoName = wizard.buyerName
+    ? `${wizard.buyerName} × ${wizard.selectedProductIds.length > 0 ? `${wizard.selectedProductIds.length}개 제품` : '신규 거래'}`
+    : '';
+
+  const finalName = wizard.customName.trim() || autoName;
+
+  const toggleProduct = (id: string) => {
+    setWizard(w => ({
+      ...w,
+      selectedProductIds: w.selectedProductIds.includes(id)
+        ? w.selectedProductIds.filter(pid => pid !== id)
+        : [...w.selectedProductIds, id],
+    }));
+  };
+
+  const handleFinish = () => {
+    if (!finalName) { toast.error('프로젝트 이름을 입력해주세요.'); return; }
+    onCreate(finalName, wizard.stage);
+  };
+
+  const stepTitles = ['① 바이어 선택', '② 제품 선택', '③ 단계 설정'];
+
+  return (
+    <DialogContent className="sm:max-w-md">
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <span className="text-primary">🚀</span> 새 프로젝트 만들기
+        </DialogTitle>
+        {/* Step indicator */}
+        <div className="flex items-center gap-1 mt-2">
+          {[1, 2, 3].map(s => (
+            <div key={s} className="flex items-center gap-1">
+              <div className={cn(
+                'w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold transition-colors',
+                wizard.step === s
+                  ? 'bg-primary text-primary-foreground'
+                  : wizard.step > s
+                  ? 'bg-primary/20 text-primary'
+                  : 'bg-muted text-muted-foreground'
+              )}>{s}</div>
+              <span className={cn(
+                'text-xs hidden sm:inline',
+                wizard.step === s ? 'text-foreground font-medium' : 'text-muted-foreground'
+              )}>{stepTitles[s - 1].slice(2)}</span>
+              {s < 3 && <div className="w-6 h-px bg-border mx-1" />}
+            </div>
+          ))}
+        </div>
+      </DialogHeader>
+
+      {/* Step 1: 바이어 선택 */}
+      {wizard.step === 1 && (
+        <div className="space-y-3 py-2">
+          <p className="text-sm text-muted-foreground">거래할 바이어를 선택하세요.</p>
+          {buyers.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Building2 className="h-10 w-10 mx-auto mb-2 opacity-30" />
+              <p className="text-sm">등록된 바이어가 없습니다.</p>
+              <p className="text-xs mt-1">마이 데이터에서 바이어를 먼저 등록해주세요.</p>
+            </div>
+          ) : (
+            <ScrollArea className="h-56">
+              <div className="space-y-2 pr-2">
+                {buyers.map(b => (
+                  <div
+                    key={b.id}
+                    className={cn(
+                      'flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all',
+                      wizard.buyerId === b.id
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border hover:border-primary/40 hover:bg-muted/30'
+                    )}
+                    onClick={() => setWizard(w => ({ ...w, buyerId: b.id, buyerName: b.company_name }))}
+                  >
+                    <Building2 className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">{b.company_name}</p>
+                      <p className="text-xs text-muted-foreground">{getBuyerCountryDisplay(b.country)}</p>
+                    </div>
+                    {wizard.buyerId === b.id && (
+                      <Badge variant="default" className="text-[10px] flex-shrink-0">선택됨</Badge>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+          {/* Skip option */}
+          <p className="text-xs text-muted-foreground text-center">
+            바이어 없이 진행하려면{' '}
+            <button
+              className="text-primary underline underline-offset-2"
+              onClick={() => setWizard(w => ({ ...w, buyerId: '', buyerName: '', step: 2 }))}
+            >
+              건너뛰기
+            </button>
+          </p>
+        </div>
+      )}
+
+      {/* Step 2: 제품 선택 */}
+      {wizard.step === 2 && (
+        <div className="space-y-3 py-2">
+          <p className="text-sm text-muted-foreground">포함할 제품을 선택하세요. (복수 선택 가능)</p>
+          {productEntries.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Package className="h-10 w-10 mx-auto mb-2 opacity-30" />
+              <p className="text-sm">등록된 제품이 없습니다.</p>
+              <p className="text-xs mt-1">마이 데이터에서 제품을 먼저 등록해주세요.</p>
+            </div>
+          ) : (
+            <ScrollArea className="h-52">
+              <div className="space-y-2 pr-2">
+                {productEntries.map(p => {
+                  const isSelected = wizard.selectedProductIds.includes(p.id);
+                  return (
+                    <div
+                      key={p.id}
+                      className={cn(
+                        'flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all',
+                        isSelected
+                          ? 'border-primary bg-primary/5'
+                          : 'border-border hover:border-primary/40 hover:bg-muted/30'
+                      )}
+                      onClick={() => toggleProduct(p.id)}
+                    >
+                      {isSelected
+                        ? <CheckSquare className="h-4 w-4 text-primary flex-shrink-0" />
+                        : <Square className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      }
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{p.productName}</p>
+                        <p className="text-xs text-muted-foreground">{p.skuCode} · ${p.unitPrice.toFixed(2)}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </ScrollArea>
+          )}
+          {wizard.selectedProductIds.length > 0 && (
+            <p className="text-xs text-primary text-center">{wizard.selectedProductIds.length}개 제품 선택됨</p>
+          )}
+        </div>
+      )}
+
+      {/* Step 3: 단계 + 이름 설정 */}
+      {wizard.step === 3 && (
+        <div className="space-y-4 py-2">
+          <div className="space-y-2">
+            <p className="text-sm font-medium">시작 단계 선택</p>
+            <div className="grid grid-cols-1 gap-2">
+              {PIPELINE_STAGES.map(stage => (
+                <div
+                  key={stage}
+                  className={cn(
+                    'flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all text-sm',
+                    wizard.stage === stage
+                      ? 'border-primary bg-primary/5 text-primary font-medium'
+                      : 'border-border hover:border-primary/30 hover:bg-muted/30'
+                  )}
+                  onClick={() => setWizard(w => ({ ...w, stage }))}
+                >
+                  <div className={cn('w-2 h-2 rounded-full flex-shrink-0', STAGE_HEADER_COLORS[stage])} />
+                  {stage}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-medium">프로젝트 이름</p>
+            {autoName && (
+              <p className="text-xs text-muted-foreground">자동 생성: <span className="text-foreground">{autoName}</span></p>
+            )}
+            <Input
+              placeholder={autoName || '프로젝트 이름 직접 입력'}
+              value={wizard.customName}
+              onChange={e => setWizard(w => ({ ...w, customName: e.target.value }))}
+            />
+          </div>
+        </div>
+      )}
+
+      <DialogFooter className="gap-2">
+        {wizard.step > 1 && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1"
+            onClick={() => setWizard(w => ({ ...w, step: (w.step - 1) as 1 | 2 | 3 }))}
+          >
+            <ChevronLeft className="h-4 w-4" /> 이전
+          </Button>
+        )}
+        <Button variant="outline" onClick={onClose} className="mr-auto">취소</Button>
+        {wizard.step < 3 ? (
+          <Button
+            onClick={() => setWizard(w => ({ ...w, step: (w.step + 1) as 1 | 2 | 3 }))}
+            disabled={wizard.step === 1 && buyers.length > 0 && !wizard.buyerId}
+          >
+            다음 <ChevronRight className="h-4 w-4 ml-1" />
+          </Button>
+        ) : (
+          <Button onClick={handleFinish} disabled={!finalName}>
+            만들기
+          </Button>
+        )}
+      </DialogFooter>
+    </DialogContent>
+  );
+}
+
+// ──────────────────────────────────────────────────────────
 // Main Export Projects Page
 // ──────────────────────────────────────────────────────────
 export default function ExportProjectsPage() {
   const { projects, createProject, setActiveProject, deleteProject, updateProjectStage } = useProjectStore();
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
 
-  const handleCreateProject = () => {
-    if (!newProjectName.trim()) { toast.error('프로젝트 이름을 입력해주세요.'); return; }
-    const id = createProject(newProjectName.trim());
+  const handleCreateProject = (name: string, stage: PipelineStage) => {
+    const id = createProject(name);
+    updateProjectStage(id, stage);
     setActiveProject(id);
     setShowCreateDialog(false);
-    setNewProjectName('');
     toast.success('새 프로젝트가 생성되었습니다.');
   };
 
@@ -683,26 +925,12 @@ export default function ExportProjectsPage() {
         </div>
       </div>
 
-      {/* Create Dialog */}
+      {/* 3-Step Create Dialog */}
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>새 프로젝트 만들기</DialogTitle>
-          </DialogHeader>
-          <div className="py-4">
-            <Input
-              placeholder="프로젝트 이름 (예: 일본 A사 첫 제안)"
-              value={newProjectName}
-              onChange={e => setNewProjectName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCreateProject()}
-              autoFocus
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>취소</Button>
-            <Button onClick={handleCreateProject}>만들기</Button>
-          </DialogFooter>
-        </DialogContent>
+        <CreateProjectWizard
+          onClose={() => setShowCreateDialog(false)}
+          onCreate={handleCreateProject}
+        />
       </Dialog>
     </div>
   );
