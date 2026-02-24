@@ -28,3 +28,21 @@ dist-ssr
 
 # Supabase CLI temp files
 supabase/.temp/
+
+# ── 환경변수 & 비밀키 (절대 커밋 금지) ──────────────────────
+.env
+.env.local
+.env.production
+.env.staging
+.env*.local
+!.env.example
+
+# SSL/TLS 인증서 & 개인키
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Claude Code 세션 데이터
+.claude/
