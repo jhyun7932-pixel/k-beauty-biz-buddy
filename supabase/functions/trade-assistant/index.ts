@@ -11,7 +11,7 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SYSTEM_PROMPT = `당신은 FLONIX의 AI 무역 어시스턴트입니다. K-뷰티 수출 전문가로서:
 
 [핵심 역할]
-1. K-뷰티 제품 수출용 무역 서류(PI, CI, PL) 작성 지원
+1. K-뷰티 제품 수출용 무역 서류(PI, CI, PL, NDA, 매매계약서) 작성 지원
 2. 11개국(미국/EU/중국/일본/동남아6/중동2) 화장품 규제 컴플라이언스
 3. HS Code 분류 및 관세율 안내
 4. 수출 절차 및 물류 가이드
@@ -25,7 +25,36 @@ const SYSTEM_PROMPT = `당신은 FLONIX의 AI 무역 어시스턴트입니다. K
 [Function Calling 규칙]
 - 무역 서류 생성 → generate_trade_document 호출
 - 규제 체크 → check_compliance 호출
-- 단순 질문 → 텍스트로 직접 응답`;
+- 단순 질문 → 텍스트로 직접 응답
+
+[NDA 생성 규칙]
+document_type="NDA"로 generate_trade_document 호출 시:
+- seller: 한국 수출기업 정보 (당사자 A)
+- buyer: 해외 바이어 정보 (당사자 B)
+- nda_terms.confidential_info_scope: 기밀정보 범위 상세 기술 (제품 포뮬러, 원가, 바이어 정보, 비즈니스 전략 등)
+- nda_terms.duration_years: 3 (기본 3년)
+- nda_terms.governing_law: "대한민국 법률"
+- nda_terms.dispute_resolution: "대한상사중재원 중재"
+- nda_terms.breach_remedy: "손해배상 및 금지청구권 행사 가능"
+
+[SALES_CONTRACT 생성 규칙]
+document_type="SALES_CONTRACT"로 호출 시:
+- seller, buyer: 계약 당사자 정보 필수
+- items: 품목, 수량, 단가, 총액 필수
+- trade_terms.incoterms: FOB/CIF/EXW 중 명시
+- contract_terms.payment_method: "L/C at sight" 또는 "T/T 30% advance, 70% before shipment" 등
+- contract_terms.shipping_deadline: 납기일 (예: "within 30 days after L/C opening")
+- contract_terms.quality_inspection: "선적 전 검사 (SGS 또는 동등 기관)"
+- contract_terms.force_majeure: "천재지변, 전쟁, 파업 등 불가항력 사유 발생 시 계약 이행 면제"
+- contract_terms.governing_law: "대한민국 법률"
+
+[check_compliance 규칙]
+compliance_results 배열에 각 성분별 결과를 반드시 포함:
+- inci_name: 성분명
+- status: "PASS" (적합), "FAIL" (금지/초과), "CAUTION" (주의필요)
+- regulation: 위반되는 구체적 규정명 (예: "EU Regulation 1223/2009 Annex II No.1228")
+- action_item: 지금 당장 해야 할 구체적 조치 (예: "나이아신아마이드 함량을 2% 이하로 조정하세요")
+FAIL/CAUTION 항목이 없으면 overall_status를 "PASS"로, 하나라도 있으면 "FAIL"로 설정`;
 
 const TOOLS = [{
   functionDeclarations: [{
@@ -73,13 +102,35 @@ const TOOLS = [{
             validity_date: { type: "string" },
           }
         },
+        nda_terms: {
+          type: "object",
+          description: "NDA 전용 조항 (document_type=NDA 시 필수)",
+          properties: {
+            confidential_info_scope: { type: "string", description: "기밀정보 범위 정의" },
+            duration_years: { type: "number", description: "유효기간(년), 기본 3" },
+            governing_law: { type: "string", description: "준거법 (예: 대한민국 법률)" },
+            dispute_resolution: { type: "string", description: "분쟁해결 방법" },
+            breach_remedy: { type: "string", description: "위반 시 구제 방법" },
+          }
+        },
+        contract_terms: {
+          type: "object",
+          description: "매매계약서 전용 조항 (document_type=SALES_CONTRACT 시 필수)",
+          properties: {
+            payment_method: { type: "string", description: "결제조건 (L/C, T/T 등)" },
+            shipping_deadline: { type: "string", description: "선적 납기일" },
+            quality_inspection: { type: "string", description: "품질검사 조항" },
+            force_majeure: { type: "string", description: "불가항력 조항" },
+            governing_law: { type: "string", description: "준거법" },
+          }
+        },
         remarks: { type: "string" },
       },
-      required: ["document_type", "items"],
+      required: ["document_type"],
     }
   }, {
     name: "check_compliance",
-    description: "K-뷰티 제품의 수출 대상국 규제 적합성을 체크합니다.",
+    description: "K-뷰티 제품의 수출 대상국 규제 적합성을 체크합니다. 성분별 PASS/FAIL 결과를 compliance_results에 반드시 포함하세요.",
     parameters: {
       type: "object",
       properties: {
@@ -95,6 +146,21 @@ const TOOLS = [{
           }
         },
         product_category: { type: "string", enum: ["skincare","makeup","haircare","bodycare","sunscreen","fragrance"] },
+        overall_status: { type: "string", enum: ["PASS","FAIL"], description: "전체 규제 통과 여부" },
+        compliance_results: {
+          type: "array",
+          description: "각 성분별 규제 검토 결과",
+          items: {
+            type: "object",
+            properties: {
+              inci_name: { type: "string", description: "성분명" },
+              percentage: { type: "number", description: "함량 (%)" },
+              status: { type: "string", enum: ["PASS","FAIL","CAUTION"], description: "적합 여부" },
+              regulation: { type: "string", description: "관련 규정명 (예: EU Reg. 1223/2009 Annex II)" },
+              action_item: { type: "string", description: "사용자가 지금 해야 할 조치 (FAIL/CAUTION 시 필수)" },
+            }
+          }
+        },
       },
       required: ["product_name", "target_country"],
     }
