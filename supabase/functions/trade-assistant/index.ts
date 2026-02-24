@@ -230,6 +230,33 @@ async function geminiStream(
   });
 }
 
+/** Gemini 503/429 자동 재시도 (지수 백오프: 1s → 2s → 4s) */
+async function geminiStreamWithRetry(
+  messages: Array<{ role: string; parts: Array<Record<string, unknown>> }>,
+  tools: boolean,
+  maxTokens = 8192,
+): Promise<Response> {
+  const RETRY_DELAYS = [1000, 2000, 4000];
+  const RETRYABLE = new Set([429, 503]);
+
+  for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt++) {
+    const res = await geminiStream(messages, tools, maxTokens);
+    if (res.ok) return res;
+
+    if (RETRYABLE.has(res.status)) {
+      console.warn(`[Gemini] ${res.status} — retry ${attempt + 1}/${RETRY_DELAYS.length} in ${RETRY_DELAYS[attempt]}ms`);
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
+      continue;
+    }
+
+    // 재시도 불가 오류는 즉시 반환
+    return res;
+  }
+
+  // 마지막 시도
+  return geminiStream(messages, tools, maxTokens);
+}
+
 async function saveMsg(
   sb: ReturnType<typeof createClient>,
   uid: string,
@@ -337,9 +364,17 @@ Deno.serve(async (req) => {
           const MAX_CONTEXT_LOOPS = 3;
 
           for (let loop = 0; loop < MAX_CONTEXT_LOOPS; loop++) {
-            const r1 = await geminiStream(currentMessages, true);
+            const r1 = await geminiStreamWithRetry(currentMessages, true);
             if (!r1.ok || !r1.body) {
-              push({ type: "error", data: { message: `Gemini Error: ${await r1.text()}` } });
+              const isOverload = r1.status === 503 || r1.status === 429;
+              push({
+                type: "error",
+                data: {
+                  message: isOverload
+                    ? "AI 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해주세요."
+                    : `Gemini Error: ${await r1.text()}`,
+                },
+              });
               ctrl.close();
               return;
             }
@@ -461,7 +496,7 @@ Deno.serve(async (req) => {
               },
             ];
 
-            const r2 = await geminiStream(p2Msgs, false, 2048);
+            const r2 = await geminiStreamWithRetry(p2Msgs, false, 2048);
             if (r2.ok && r2.body) {
               const rd2 = r2.body.getReader();
               let b2 = "", p2Text = "";
