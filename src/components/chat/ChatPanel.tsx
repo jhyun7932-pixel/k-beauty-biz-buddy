@@ -1,6 +1,8 @@
 // 좌측 AI 채팅 패널
 
 import { useState, useRef, useEffect, type FormEvent, type KeyboardEvent } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface ChatPanelProps {
   messages: Array<{ id: string; role: string; content: string }>;
@@ -121,8 +123,8 @@ export default function ChatPanel({
           ) : (
             <div key={msg.id} className="flex gap-2.5">
               <AIAvatar />
-              <div className="flex-1 bg-white rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm border border-gray-100 max-w-[80%] text-sm text-gray-800 whitespace-pre-wrap">
-                {msg.content}
+              <div className="flex-1 bg-white rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm border border-gray-100 max-w-[80%] text-sm text-gray-800">
+                <MarkdownContent content={msg.content} />
               </div>
             </div>
           )
@@ -133,8 +135,8 @@ export default function ChatPanel({
           <div className="flex gap-2.5">
             <AIAvatar />
             <div className="flex-1 bg-white rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm border border-gray-100 max-w-[80%]">
-              <div className="text-sm text-gray-800 whitespace-pre-wrap">
-                {currentStreamingText}
+              <div className="text-sm text-gray-800">
+                <MarkdownContent content={currentStreamingText} />
                 <span className="inline-block w-[2px] h-4 bg-violet-500 ml-0.5 animate-pulse" />
               </div>
             </div>
@@ -146,8 +148,8 @@ export default function ChatPanel({
           <div className="flex gap-2.5">
             <AIAvatar />
             <div className="flex-1 bg-white rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm border border-gray-100 max-w-[80%]">
-              <div className="text-sm text-gray-800 whitespace-pre-wrap">
-                {currentPhase2Text}
+              <div className="text-sm text-gray-800">
+                <MarkdownContent content={currentPhase2Text} />
                 {phase === "phase2_streaming" && (
                   <span className="inline-block w-[2px] h-4 bg-violet-500 ml-0.5 animate-pulse" />
                 )}
@@ -251,5 +253,50 @@ function AIAvatar() {
     <div className="w-7 h-7 bg-gradient-to-br from-violet-500 to-purple-600 rounded-full flex items-center justify-center shrink-0 mt-0.5">
       <span className="text-white font-bold text-[10px]">AI</span>
     </div>
+  );
+}
+
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+        strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+        em: ({ children }) => <em className="italic">{children}</em>,
+        ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-0.5">{children}</ul>,
+        ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-0.5">{children}</ol>,
+        li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+        h1: ({ children }) => <h1 className="text-base font-bold mb-2 mt-3">{children}</h1>,
+        h2: ({ children }) => <h2 className="text-sm font-bold mb-1.5 mt-2.5">{children}</h2>,
+        h3: ({ children }) => <h3 className="text-sm font-semibold mb-1 mt-2">{children}</h3>,
+        code: ({ className, children }) => {
+          const isInline = !className;
+          return isInline ? (
+            <code className="bg-gray-100 text-violet-700 px-1 py-0.5 rounded text-xs font-mono">{children}</code>
+          ) : (
+            <code className="block bg-gray-900 text-gray-100 p-3 rounded-lg text-xs font-mono overflow-x-auto mb-2 whitespace-pre">{children}</code>
+          );
+        },
+        pre: ({ children }) => <pre className="mb-2">{children}</pre>,
+        table: ({ children }) => (
+          <div className="overflow-x-auto mb-2">
+            <table className="min-w-full border-collapse border border-gray-200 text-xs">{children}</table>
+          </div>
+        ),
+        thead: ({ children }) => <thead className="bg-gray-50">{children}</thead>,
+        th: ({ children }) => <th className="border border-gray-200 px-2 py-1.5 text-left font-semibold text-gray-700">{children}</th>,
+        td: ({ children }) => <td className="border border-gray-200 px-2 py-1.5 text-gray-600">{children}</td>,
+        blockquote: ({ children }) => (
+          <blockquote className="border-l-3 border-violet-300 pl-3 my-2 text-gray-600 italic">{children}</blockquote>
+        ),
+        hr: () => <hr className="my-3 border-gray-200" />,
+        a: ({ href, children }) => (
+          <a href={href} target="_blank" rel="noopener noreferrer" className="text-violet-600 underline hover:text-violet-800">{children}</a>
+        ),
+      }}
+    >
+      {content}
+    </ReactMarkdown>
   );
 }

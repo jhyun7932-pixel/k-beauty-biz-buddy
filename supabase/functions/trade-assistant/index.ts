@@ -28,9 +28,16 @@ const SYSTEM_PROMPT = `당신은 FLONIX의 AI 무역 어시스턴트입니다. K
 - 규제 체크 → check_compliance 호출
 - 단순 질문 → 텍스트로 직접 응답
 
+[판매자(Seller) 정보 규칙 - 필수 준수]
+- 무역 서류 생성 시 seller 정보는 반드시 get_user_context로 조회한 실제 데이터만 사용할 것
+- get_user_context 결과의 company 필드에 회사명, 주소, 이메일, 전화번호, 담당자명이 포함됨
+- 절대로 seller 정보를 임의로 생성하거나 추측하지 말 것
+- company 데이터가 없으면 "회사 정보를 먼저 등록해주세요"라고 안내할 것
+
 [get_user_context 사용 규칙]
 - 사용자가 "내 바이어", "등록된 제품", "일본 바이어에게 PI 작성" 등 개인 데이터 기반 요청 시 먼저 호출
-- 반환된 buyers/products 정보를 활용해 generate_trade_document를 실제 데이터로 채워넣기
+- 반환된 company 정보를 seller로, buyers/products 정보를 활용해 generate_trade_document를 실제 데이터로 채워넣기
+- 문서 생성 요청 시에는 반드시 get_user_context를 먼저 호출하여 실제 판매자/바이어/제품 정보를 확인할 것
 
 [NDA 생성 규칙]
 document_type="NDA"로 generate_trade_document 호출 시:
@@ -223,7 +230,7 @@ async function geminiStream(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: messages,
-      generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
+      generationConfig: { maxOutputTokens: maxTokens, temperature: 0.1 },
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
       ...(tools ? { tools: TOOLS } : {}),
     }),
@@ -270,12 +277,14 @@ async function saveMsg(
   });
 }
 
-/** 사용자의 바이어, 제품, 프로필 정보를 DB에서 조회 */
+/** 사용자의 회사, 바이어, 제품 정보를 DB에서 조회 */
 async function fetchUserContext(sb: ReturnType<typeof createClient>, userId: string) {
-  const [profileRes, buyersRes, productsRes] = await Promise.all([
-    sb.from("profiles")
-      .select("company_name, contact_name, contact_email, contact_phone, address")
-      .eq("id", userId)
+  const [companyRes, buyersRes, productsRes] = await Promise.all([
+    sb.from("companies")
+      .select("name, contact_email, contact_phone, address, website, default_incoterms, default_payment_terms")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(1)
       .single(),
     sb.from("buyers")
       .select("company_name, country, channel, buyer_type, contact_name, contact_email, status_stage")
@@ -288,6 +297,16 @@ async function fetchUserContext(sb: ReturnType<typeof createClient>, userId: str
       .eq("status", "active")
       .limit(15),
   ]);
+
+  const company = companyRes.data ? {
+    company_name: companyRes.data.name,
+    contact_email: companyRes.data.contact_email,
+    contact_phone: companyRes.data.contact_phone,
+    address: companyRes.data.address,
+    website: companyRes.data.website,
+    default_incoterms: companyRes.data.default_incoterms,
+    default_payment_terms: companyRes.data.default_payment_terms,
+  } : null;
 
   const buyers = (buyersRes.data || []).map((b: any) => ({
     company_name: b.company_name,
@@ -309,10 +328,10 @@ async function fetchUserContext(sb: ReturnType<typeof createClient>, userId: str
   }));
 
   return {
-    profile: profileRes.data || {},
+    company,
     buyers,
     products,
-    summary: `등록된 바이어 ${buyers.length}개, 제품 ${products.length}개`,
+    summary: `회사: ${company?.company_name || "미등록"}, 바이어 ${buyers.length}개, 제품 ${products.length}개`,
   };
 }
 

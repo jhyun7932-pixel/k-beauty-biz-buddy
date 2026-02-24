@@ -1,6 +1,6 @@
 // 우측 패널 - PI/CI/PL A4 문서 Progressive Rendering
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { useStreamingStore } from "../../stores/streamingStore";
@@ -286,13 +286,15 @@ export default function RightPanel() {
       {/* 본문 */}
       <div className="flex-1 overflow-y-auto p-5">
         {toolCall ? (
-          <DocRenderer
-            toolCall={toolCall}
-            docType={rightPanelDocType}
-            isStreaming={isStreaming}
-          />
+          <FadeIn>
+            <DocRenderer
+              toolCall={toolCall}
+              docType={rightPanelDocType}
+              isStreaming={isStreaming}
+            />
+          </FadeIn>
         ) : (
-          <FullSkeleton />
+          <DocumentSkeleton docType={rightPanelDocType} />
         )}
       </div>
 
@@ -1150,26 +1152,72 @@ function LineSkeleton({ n, s }: { n: number; s: boolean }) {
   );
 }
 
-function FullSkeleton() {
+function FadeIn({ children }: { children: React.ReactNode }) {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const t = requestAnimationFrame(() => setVisible(true));
+    return () => cancelAnimationFrame(t);
+  }, []);
   return (
-    <div className="space-y-5 animate-pulse">
-      <div className="h-8 bg-gray-200 rounded w-3/4 mx-auto" />
-      <div className="border border-gray-200 rounded p-4 space-y-2">
-        {[1, 2, 3].map((i) => (
-          <div
-            key={i}
-            className="h-3 bg-gray-100 rounded"
-            style={{ width: `${60 + i * 10}%` }}
-          />
-        ))}
+    <div
+      className="transition-opacity duration-500 ease-out"
+      style={{ opacity: visible ? 1 : 0 }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function DocumentSkeleton({ docType }: { docType: DocumentType }) {
+  const label = docType ? DOC_LABELS[docType] || docType : "문서";
+  return (
+    <div className="space-y-4 animate-pulse">
+      {/* 문서 타이틀 스켈레톤 */}
+      <div className="border border-gray-200 rounded-sm p-5 text-center" style={{ maxWidth: 480, margin: "0 auto" }}>
+        <div className="h-6 bg-gray-200 rounded w-2/3 mx-auto mb-3" />
+        <div className="flex justify-between">
+          <div className="h-3 bg-gray-100 rounded w-24" />
+          <div className="h-3 bg-gray-100 rounded w-24" />
+        </div>
       </div>
-      <div className="border border-gray-200 rounded p-4 space-y-2">
-        {[1, 2].map((i) => (
-          <div key={i} className="h-10 bg-gray-100 rounded" />
-        ))}
+
+      {/* Seller/Buyer 스켈레톤 */}
+      <div className="border border-gray-200 rounded-sm grid grid-cols-2" style={{ maxWidth: 480, margin: "0 auto" }}>
+        <div className="p-3 border-r border-gray-200 space-y-2">
+          <div className="h-2.5 bg-gray-200 rounded w-20" />
+          <div className="h-3 bg-gray-100 rounded w-32" />
+          <div className="h-3 bg-gray-100 rounded w-28" />
+          <div className="h-3 bg-gray-100 rounded w-36" />
+        </div>
+        <div className="p-3 space-y-2">
+          <div className="h-2.5 bg-gray-200 rounded w-20" />
+          <div className="h-3 bg-gray-100 rounded w-32" />
+          <div className="h-3 bg-gray-100 rounded w-28" />
+          <div className="h-3 bg-gray-100 rounded w-36" />
+        </div>
+      </div>
+
+      {/* 테이블 스켈레톤 */}
+      <div className="border border-gray-200 rounded-sm p-3" style={{ maxWidth: 480, margin: "0 auto" }}>
+        <div className="h-8 bg-gray-100 rounded mb-2" />
+        <div className="space-y-1.5">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-6 bg-gray-50 rounded" />
+          ))}
+        </div>
+      </div>
+
+      {/* 로딩 인디케이터 */}
+      <div className="flex items-center justify-center gap-2 py-3">
+        <div className="w-5 h-5 border-2 border-violet-300 border-t-violet-600 rounded-full animate-spin" />
+        <span className="text-sm text-gray-500">{label} 생성 중...</span>
       </div>
     </div>
   );
+}
+
+function FullSkeleton() {
+  return <DocumentSkeleton docType={null} />;
 }
 
 function Dots({ label }: { label: string }) {

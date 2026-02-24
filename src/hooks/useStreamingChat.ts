@@ -205,6 +205,11 @@ function handleSSE(
       if (c) store.appendPhase2Delta(c);
       break;
     }
+    case "context_loading": {
+      const loadMsg = evt.data.message as string;
+      if (loadMsg) store.appendTextDelta(`\n_${loadMsg}_\n`);
+      break;
+    }
     case "stream_end":
       store.completeStreaming();
       break;
