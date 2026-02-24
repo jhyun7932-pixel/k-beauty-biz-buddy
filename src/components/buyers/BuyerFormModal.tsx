@@ -7,13 +7,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useBuyers, type Buyer } from '@/hooks/useBuyers';
 import { useToast } from '@/hooks/use-toast';
-import { 
-  Loader2, 
-  UserPlus, 
-  Building2, 
-  Mail, 
-  Phone, 
-  Globe, 
+import { BUYER_COUNTRY_OPTIONS } from '@/lib/countryFlags';
+import {
+  Loader2,
+  UserPlus,
+  Building2,
+  Mail,
+  Phone,
+  Globe,
   MapPin,
   Store
 } from 'lucide-react';
@@ -24,11 +25,6 @@ interface BuyerFormModalProps {
   buyer?: Buyer | null; // 수정 모드일 때
   onSuccess?: () => void; // 성공 콜백
 }
-
-const COUNTRIES = [
-  '미국', '중국', '일본', '홍콩', '대만', 'EU', 
-  '베트남', '인도네시아', '말레이시아', '태국', '호주', '기타'
-];
 
 const CHANNELS = [
   { value: 'distributor', label: '유통/도매' },
@@ -189,8 +185,8 @@ export function BuyerFormModal({ open, onClose, buyer, onSuccess }: BuyerFormMod
                   </div>
                 </SelectTrigger>
                 <SelectContent>
-                  {COUNTRIES.map(country => (
-                    <SelectItem key={country} value={country}>{country}</SelectItem>
+                  {BUYER_COUNTRY_OPTIONS.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

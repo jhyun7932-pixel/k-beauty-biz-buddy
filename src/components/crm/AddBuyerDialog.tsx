@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { COUNTRY_OPTIONS } from '@/lib/countryFlags';
+import { BUYER_COUNTRY_OPTIONS } from '@/lib/countryFlags';
 import { toast } from 'sonner';
 import type { Buyer } from '@/hooks/useBuyers';
 
@@ -100,7 +100,7 @@ export function AddBuyerDialog({ open, onOpenChange, onSubmit }: AddBuyerDialogP
                 <SelectValue placeholder="국가 선택" />
               </SelectTrigger>
               <SelectContent>
-                {COUNTRY_OPTIONS.map((c) => (
+                {BUYER_COUNTRY_OPTIONS.map((c) => (
                   <SelectItem key={c.value} value={c.value}>
                     {c.label}
                   </SelectItem>
