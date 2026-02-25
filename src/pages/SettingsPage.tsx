@@ -1,5 +1,7 @@
-import React, { useRef, useCallback, useState } from 'react';
+import React, { useRef, useCallback, useState, useEffect } from 'react';
 import { useProjectStore, TargetCountry, COUNTRY_NAMES } from '@/stores/projectStore';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -22,6 +24,7 @@ import {
   CheckCircle,
   X,
   Globe,
+  Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -29,15 +32,114 @@ const ALL_COUNTRIES: TargetCountry[] = ['US', 'JP', 'EU', 'HK', 'TW', 'CN', 'VN'
 
 export default function SettingsPage() {
   const { companySettings, setCompanySettings } = useProjectStore();
+  const { user } = useAuth();
+  const [saving, setSaving] = useState(false);
 
   const logoInputRef = useRef<HTMLInputElement>(null);
   const stampInputRef = useRef<HTMLInputElement>(null);
   const signatureInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSave = () => {
-    toast.success('설정이 저장되었습니다.');
+  const handleSave = async () => {
+    if (!user) {
+      toast.error('로그인이 필요합니다.');
+      return;
+    }
+    setSaving(true);
+    try {
+      // 1) companies 테이블: 기존 row 있으면 UPDATE, 없으면 INSERT
+      const companyData = {
+        name: companySettings.companyName || '',
+        company_name_kr: companySettings.companyNameKr || null,
+        contact_email: companySettings.contactEmail || null,
+        contact_phone: companySettings.contactPhone || null,
+        address: companySettings.address || null,
+        website: companySettings.website || null,
+        logo_url: companySettings.logoUrl || null,
+        default_moq: companySettings.defaultMoq || 500,
+        default_lead_time: companySettings.defaultLeadTime || 14,
+        updated_at: new Date().toISOString(),
+      };
+
+      // 기존 company row 존재 여부 확인
+      const { data: existing } = await supabase
+        .from('companies')
+        .select('id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (existing) {
+        // UPDATE
+        const { error: updateErr } = await supabase
+          .from('companies')
+          .update(companyData)
+          .eq('user_id', user.id);
+        if (updateErr) throw updateErr;
+      } else {
+        // INSERT
+        const { error: insertErr } = await supabase
+          .from('companies')
+          .insert({ ...companyData, user_id: user.id });
+        if (insertErr) throw insertErr;
+      }
+
+      // 2) profiles.company_info에도 백업 저장 (AI fallback용)
+      const companyInfoJson = {
+        company_name: companySettings.companyName,
+        company_name_kr: companySettings.companyNameKr,
+        ceo_name: companySettings.ceoName,
+        contact_name: companySettings.contactName,
+        contact_title: companySettings.contactTitle,
+        contact_email: companySettings.contactEmail,
+        contact_phone: companySettings.contactPhone,
+        address: companySettings.address,
+        website: companySettings.website,
+        export_countries: companySettings.exportCountries,
+        brand_tone: companySettings.brandTone,
+        email_signature: companySettings.emailSignature,
+      };
+
+      await supabase
+        .from('profiles')
+        .update({ company_info: companyInfoJson })
+        .eq('user_id', user.id);
+
+      toast.success('설정이 저장되었습니다. AI 에이전트가 이 정보를 사용합니다.');
+    } catch (e) {
+      console.error('Save error:', e);
+      toast.error(`저장 실패: ${(e as Error).message}`);
+    } finally {
+      setSaving(false);
+    }
   };
+
+  // 페이지 마운트 시 DB에서 기존 회사정보 로드
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      const { data } = await supabase
+        .from('companies')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (data) {
+        // DB 데이터를 store에 반영 (store에 값이 비어있을 때만)
+        const updates: Record<string, unknown> = {};
+        if (!companySettings.companyName && data.name) updates.companyName = data.name;
+        if (!companySettings.companyNameKr && data.company_name_kr) updates.companyNameKr = data.company_name_kr;
+        if (!companySettings.contactEmail && data.contact_email) updates.contactEmail = data.contact_email;
+        if (!companySettings.contactPhone && data.contact_phone) updates.contactPhone = data.contact_phone;
+        if (!companySettings.address && data.address) updates.address = data.address;
+        if (!companySettings.website && data.website) updates.website = data.website;
+        if (!companySettings.logoUrl && data.logo_url) updates.logoUrl = data.logo_url;
+        if (data.default_moq) updates.defaultMoq = data.default_moq;
+        if (data.default_lead_time) updates.defaultLeadTime = data.default_lead_time;
+        if (Object.keys(updates).length > 0) {
+          setCompanySettings(updates as any);
+        }
+      }
+    })();
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Image upload handler (generic)
   const handleImageUpload = useCallback(
@@ -100,9 +202,9 @@ export default function SettingsPage() {
               AI 에이전트가 문서 생성 시 참조하는 회사 정보를 설정하세요.
             </p>
           </div>
-          <Button onClick={handleSave} className="gap-2">
-            <Save className="h-4 w-4" />
-            저장
+          <Button onClick={handleSave} disabled={saving} className="gap-2">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {saving ? '저장 중...' : '저장'}
           </Button>
         </div>
       </div>

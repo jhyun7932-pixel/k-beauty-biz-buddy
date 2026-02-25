@@ -70,15 +70,24 @@ const SYSTEM_PROMPT = `당신은 FLONIX의 AI 무역 어시스턴트입니다. K
 
 [판매자(Seller) 정보 규칙 - 필수 준수]
 - 무역 서류 생성 시 seller 정보는 반드시 get_user_context로 조회한 실제 데이터만 사용할 것
-- get_user_context 결과의 company 필드에 회사명, 주소, 이메일, 전화번호, 담당자명, 로고URL, 은행정보, 인증정보가 포함됨
+- get_user_context 결과의 seller 필드에 아래 정보가 포함됨:
+  company_name(영문사명), company_name_kr(한글사명), representative(대표자), contact_person(담당자),
+  contact_email, contact_phone, address, website, logo_url,
+  bank_name, bank_account, bank_swift, default_moq, default_lead_time,
+  default_incoterms, default_payment_terms, certifications[], export_countries[], email_signature
 - 절대로 seller 정보를 임의로 생성하거나 추측하지 말 것
-- company 데이터가 없으면 "[회사명 미등록]" 등으로 표시하고 절대 임의로 생성하지 않는다
-- company_name이 null이면 "회사 정보를 먼저 등록해주세요"라고 안내할 것
+- seller.company_name이 null이면:
+  1. "회사 정보가 아직 등록되지 않았습니다"라고 안내
+  2. "설정 > 회사 기본 정보에서 영문 회사명, 주소 등을 입력해주세요"라고 구체적으로 안내
+  3. 문서의 seller 필드에 "[회사명 미등록]", "[주소 미등록]" 등 플레이스홀더 사용
+  4. 절대로 가짜 회사명이나 추측된 정보를 넣지 않음
 
 [get_user_context 사용 규칙]
 - 사용자가 "내 바이어", "등록된 제품", "일본 바이어에게 PI 작성" 등 개인 데이터 기반 요청 시 먼저 호출
-- 반환된 company 정보를 seller로, buyers/products 정보를 활용해 generate_trade_document를 실제 데이터로 채워넣기
+- 반환된 seller 정보를 문서의 seller(판매자/수출자)로 직접 사용
+- buyers/products 정보를 활용해 generate_trade_document를 실제 데이터로 채워넣기
 - 문서 생성 요청 시에는 반드시 get_user_context를 먼저 호출하여 실제 판매자/바이어/제품 정보를 확인할 것
+- seller.email_signature가 있으면 이메일 작성 시 하단에 자동 삽입
 
 [NDA 생성 규칙]
 document_type="NDA"로 generate_trade_document 호출 시:
@@ -122,12 +131,12 @@ CAUTION 케이스: "상세 규정 원문 확인 필요: [규정명]. 추가 검�
 document_type="PROPOSAL"로 generate_trade_document 호출 시:
 - 반드시 get_user_context를 먼저 호출하여 실제 회사/제품 데이터를 수집
 - proposal_sections에 아래 구조로 작성:
-  1. company_overview: 회사명, 소재지, 핵심 역량 3가지 (K-Beauty 전문성 강조)
-  2. certifications: 보유 인증 정보 (get_user_context의 company.certifications 활용)
-  3. product_highlights: 실제 등록 제품 기반 주력 라인업 설명
+  1. company_overview: seller.company_name, seller.address, 핵심 역량 3가지 (K-Beauty 전문성 강조)
+  2. certifications: 보유 인증 정보 (seller.certifications 활용)
+  3. product_highlights: 실제 등록 제품(products[]) 기반 주력 라인업 설명
   4. why_choose_us: 규제 준수, 납기 능력, 생산 역량
-  5. partnership_terms: MOQ, 리드타임, 결제조건 (company.default_moq, default_lead_time 활용)
-  6. cta: "샘플 요청", "화상미팅 스케줄" 등 구체적 CTA
+  5. partnership_terms: MOQ, 리드타임, 결제조건 (seller.default_moq, seller.default_lead_time 활용)
+  6. cta: "샘플 요청", "화상미팅 스케줄" 등 구체적 CTA + seller.contact_email/phone 포함
 - items 배열에 제품 포트폴리오 (제품명, 카테고리, 용량, 단가) 포함
 - buyer가 특정되면 해당 국가 규제 준수 현황도 언급`;
 
@@ -364,81 +373,90 @@ async function saveMsg(
 
 /** 사용자의 회사, 바이어, 제품, 프로필 정보를 DB에서 조회 */
 async function fetchUserContext(sb: ReturnType<typeof createClient>, userId: string) {
+  // companies, profiles, buyers, products 동시 조회
+  // profiles PK는 id(uuid)이지만 user_id 컬럼으로도 조회 가능
   const [companyRes, profileRes, buyersRes, productsRes] = await Promise.all([
     sb.from("companies")
-      .select("name, company_name_kr, contact_email, contact_phone, address, website, logo_url, bank_name, bank_account, bank_swift, default_moq, default_lead_time, default_incoterms, default_payment_terms, main_category, manufacturing_type, certifications")
+      .select("*")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(1)
-      .single(),
+      .maybeSingle(),
     sb.from("profiles")
-      .select("display_name, company_info")
+      .select("*")
       .eq("user_id", userId)
-      .single(),
+      .maybeSingle(),
     sb.from("buyers")
-      .select("company_name, country, channel, buyer_type, contact_name, contact_email, status_stage")
+      .select("*")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(15),
     sb.from("products")
-      .select("name_en, category, sku_code, hs_code, unit_price_range, size_ml_g")
+      .select("*")
       .eq("user_id", userId)
-      .eq("status", "active")
       .limit(15),
   ]);
 
   const cd = companyRes.data;
-  const company = cd ? {
-    company_name: cd.name,
-    company_name_kr: cd.company_name_kr,
-    contact_email: cd.contact_email,
-    contact_phone: cd.contact_phone,
-    address: cd.address,
-    website: cd.website,
-    logo_url: cd.logo_url,
-    bank_name: cd.bank_name,
-    bank_account: cd.bank_account,
-    bank_swift: cd.bank_swift,
-    default_moq: cd.default_moq,
-    default_lead_time: cd.default_lead_time,
-    default_incoterms: cd.default_incoterms,
-    default_payment_terms: cd.default_payment_terms,
-    main_category: cd.main_category,
-    manufacturing_type: cd.manufacturing_type,
-    certifications: cd.certifications,
-  } : null;
+  const pf = profileRes.data;
+  const companyInfo = (pf?.company_info && typeof pf.company_info === "object") ? pf.company_info as Record<string, unknown> : {};
 
-  // profiles.display_name → 담당자명 fallback
-  const profile = profileRes.data ? {
-    display_name: profileRes.data.display_name,
-    company_info: profileRes.data.company_info,
-  } : null;
+  // companies 우선, 없으면 profiles.company_info fallback
+  const seller = {
+    company_name: cd?.name || companyInfo.company_name as string || null,
+    company_name_kr: cd?.company_name_kr || companyInfo.company_name_kr as string || null,
+    representative: companyInfo.ceo_name as string || pf?.display_name || null,
+    contact_person: companyInfo.contact_name as string || pf?.display_name || null,
+    contact_email: cd?.contact_email || companyInfo.contact_email as string || null,
+    contact_phone: cd?.contact_phone || companyInfo.contact_phone as string || null,
+    address: cd?.address || companyInfo.address as string || null,
+    website: cd?.website || companyInfo.website as string || null,
+    logo_url: cd?.logo_url || null,
+    bank_name: cd?.bank_name || null,
+    bank_account: cd?.bank_account || null,
+    bank_swift: cd?.bank_swift || null,
+    default_moq: cd?.default_moq || 500,
+    default_lead_time: cd?.default_lead_time || 20,
+    default_incoterms: cd?.default_incoterms || "FOB",
+    default_payment_terms: cd?.default_payment_terms || "T/T 30/70",
+    main_category: cd?.main_category || null,
+    manufacturing_type: cd?.manufacturing_type || null,
+    certifications: cd?.certifications || [],
+    export_countries: companyInfo.export_countries as string[] || [],
+    email_signature: companyInfo.email_signature as string || null,
+  };
 
-  const buyers = (buyersRes.data || []).map((b: any) => ({
+  const buyers = (buyersRes.data || []).map((b: Record<string, unknown>) => ({
     company_name: b.company_name,
     country: b.country,
-    channel: b.channel,
+    channel: b.channel || b.channel_type,
     buyer_type: b.buyer_type,
     contact_name: b.contact_name,
     contact_email: b.contact_email,
     status: b.status_stage,
   }));
 
-  const products = (productsRes.data || []).map((p: any) => ({
-    name: p.name_en,
+  // products: product_name_en이 실제 컬럼명, status 필터 제거 (draft도 포함)
+  const products = (productsRes.data || []).map((p: Record<string, unknown>) => ({
+    name: p.product_name_en || p.name,
+    name_kr: p.product_name_kr,
     category: p.category,
     sku: p.sku_code,
-    hs_code: p.hs_code,
-    unit_price_usd: p.unit_price_range?.base ?? null,
+    hs_code: p.hs_code_candidate,
+    unit_price_range: p.unit_price_range,
     size_ml_g: p.size_ml_g,
+    moq: p.moq,
+    status: p.status,
   }));
 
+  const sellerName = seller.company_name || "회사명 미등록";
+  const contactName = seller.contact_person || "담당자 미등록";
+
   return {
-    company,
-    profile,
+    seller,
     buyers,
     products,
-    summary: `회사: ${company?.company_name || "미등록"}, 담당자: ${profile?.display_name || "미등록"}, 바이어 ${buyers.length}개, 제품 ${products.length}개`,
+    summary: `셀러: ${sellerName}, 담당자: ${contactName}, 바이어 ${buyers.length}건, 제품 ${products.length}건`,
   };
 }
 
