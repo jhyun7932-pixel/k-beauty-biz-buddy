@@ -16,7 +16,7 @@ export function useStreamingChat() {
   const accumRef = useRef(new StreamingJsonAccumulator());
 
   const sendMessage = useCallback(
-    async (message: string) => {
+    async (message: string, files?: File[]) => {
       // 이전 스트리밍 취소
       abortRef.current?.abort();
       const ac = new AbortController();
@@ -24,7 +24,7 @@ export function useStreamingChat() {
       accumRef.current.reset();
 
       // 사용자 메시지 추가 + 스트리밍 시작
-      store.addUserMessage(message);
+      store.addUserMessage(message || (files?.length ? "[파일 첨부]" : ""));
       store.startStreaming();
 
       try {
@@ -35,6 +35,27 @@ export function useStreamingChat() {
         if (!session) {
           store.setError("로그인이 필요합니다. 새로고침 후 다시 시도해주세요.");
           return;
+        }
+
+        // 파일 업로드 → signed URLs
+        const fileUrls: string[] = [];
+        if (files && files.length > 0) {
+          for (const file of files) {
+            const filePath = `${session.user.id}/${Date.now()}-${file.name}`;
+            const { error: uploadErr } = await supabase.storage
+              .from("chat-uploads")
+              .upload(filePath, file);
+            if (uploadErr) {
+              console.warn("파일 업로드 실패:", uploadErr.message);
+              continue;
+            }
+            const { data: urlData } = await supabase.storage
+              .from("chat-uploads")
+              .createSignedUrl(filePath, 3600);
+            if (urlData?.signedUrl) {
+              fileUrls.push(urlData.signedUrl);
+            }
+          }
         }
 
         // 히스토리 (최근 20개)
@@ -53,7 +74,11 @@ export function useStreamingChat() {
               "Content-Type": "application/json",
               Authorization: `Bearer ${session.access_token}`,
             },
-            body: JSON.stringify({ message, history }),
+            body: JSON.stringify({
+              message: message || "이 파일을 분석해줘",
+              history,
+              ...(fileUrls.length > 0 ? { file_urls: fileUrls } : {}),
+            }),
             signal: ac.signal,
           }
         );

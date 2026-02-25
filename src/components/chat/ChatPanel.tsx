@@ -1,18 +1,35 @@
-// 좌측 AI 채팅 패널
+// 좌측 AI 채팅 패널 - /슬래시 커맨드 + @멘션 + 파일 첨부 지원
 
 import { useState, useRef, useEffect, type FormEvent, type KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import NextActionCards from "./NextActionCards";
+import SlashCommandMenu from "./SlashCommandMenu";
+import MentionMenu from "./MentionMenu";
+import ChatFileAttachment from "./ChatFileAttachment";
+import { useChatInputEnhanced } from "../../hooks/useChatInputEnhanced";
+import type { Buyer } from "../../hooks/useBuyers";
+import type { ProductEntry } from "../../stores/types";
+import type { NextAction } from "../../lib/nextActions";
+
+interface ChatMessage {
+  id: string;
+  role: string;
+  content: string;
+  nextActions?: NextAction[];
+}
 
 interface ChatPanelProps {
-  messages: Array<{ id: string; role: string; content: string }>;
+  messages: ChatMessage[];
   currentStreamingText: string;
   currentPhase2Text: string;
   isStreaming: boolean;
   phase: string;
   error: string | null;
-  onSendMessage: (msg: string) => void;
+  onSendMessage: (msg: string, files?: File[]) => void;
   onCancel: () => void;
+  buyers?: Buyer[];
+  productEntries?: ProductEntry[];
 }
 
 export default function ChatPanel({
@@ -24,28 +41,97 @@ export default function ChatPanel({
   error,
   onSendMessage,
   onCancel,
+  buyers = [],
+  productEntries = [],
 }: ChatPanelProps) {
   const [input, setInput] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const {
+    slashVisible,
+    filteredCommands,
+    slashIndex,
+    selectSlashCommand,
+    mentionVisible,
+    filteredMentions,
+    mentionIndex,
+    selectMention,
+    attachedFiles,
+    addFiles,
+    removeFile,
+    clearFiles,
+    handleInputChange,
+    handleMenuKeyDown,
+    isMenuOpen,
+  } = useChatInputEnhanced({ buyers, productEntries });
 
   // 자동 스크롤
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, currentStreamingText, currentPhase2Text]);
 
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (e?: FormEvent) => {
+    e?.preventDefault();
     const t = input.trim();
-    if (!t || isStreaming) return;
-    onSendMessage(t);
+    if ((!t && !attachedFiles.length) || isStreaming) return;
+    onSendMessage(t, attachedFiles.length > 0 ? attachedFiles : undefined);
     setInput("");
+    clearFiles();
+  };
+
+  const handleSendAction = (msg: string) => {
+    if (isStreaming) return;
+    onSendMessage(msg);
   };
 
   const handleKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // 메뉴가 열려있으면 메뉴 네비게이션 우선
+    if (isMenuOpen) {
+      if (handleMenuKeyDown(e.key)) {
+        e.preventDefault();
+
+        // Enter 키로 선택 처리
+        if (e.key === "Enter") {
+          if (slashVisible && filteredCommands[slashIndex]) {
+            const msg = selectSlashCommand(filteredCommands[slashIndex]);
+            setInput("");
+            onSendMessage(msg);
+          } else if (mentionVisible && filteredMentions[mentionIndex]) {
+            const cursorPos = inputRef.current?.selectionStart ?? input.length;
+            const { newValue, newCursorPos } = selectMention(
+              filteredMentions[mentionIndex],
+              input,
+              cursorPos,
+            );
+            setInput(newValue);
+            // Set cursor position after state update
+            requestAnimationFrame(() => {
+              inputRef.current?.setSelectionRange(newCursorPos, newCursorPos);
+            });
+          }
+        }
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit(e);
+      handleSubmit();
+    }
+  };
+
+  const handleChange = (value: string) => {
+    setInput(value);
+    const cursorPos = inputRef.current?.selectionStart ?? value.length;
+    handleInputChange(value, cursorPos);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      addFiles(e.target.files);
+      e.target.value = ""; // reset
     }
   };
 
@@ -121,11 +207,22 @@ export default function ChatPanel({
               </div>
             </div>
           ) : (
-            <div key={msg.id} className="flex gap-2.5">
-              <AIAvatar />
-              <div className="flex-1 bg-white rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm border border-gray-100 max-w-[80%] text-sm text-gray-800">
-                <MarkdownContent content={msg.content} />
+            <div key={msg.id}>
+              <div className="flex gap-2.5">
+                <AIAvatar />
+                <div className="flex-1 bg-white rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm border border-gray-100 max-w-[80%] text-sm text-gray-800">
+                  <MarkdownContent content={msg.content} />
+                </div>
               </div>
+              {msg.nextActions && msg.nextActions.length > 0 && (
+                <div className="pl-9 mt-1.5">
+                  <NextActionCards
+                    actions={msg.nextActions}
+                    onActionClick={handleSendAction}
+                    disabled={isStreaming}
+                  />
+                </div>
+              )}
             </div>
           )
         )}
@@ -191,35 +288,92 @@ export default function ChatPanel({
 
       {/* 입력 영역 */}
       <div className="border-t border-gray-200 bg-white px-5 py-3">
-        <form onSubmit={handleSubmit} className="flex gap-2 items-end">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKey}
-            placeholder="무역 서류 작성, 규제 확인 등 무엇이든 물어보세요..."
-            className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent text-sm placeholder:text-gray-400"
-            rows={1}
-            style={{ minHeight: 42, maxHeight: 120 }}
-            disabled={isStreaming}
-          />
-          {isStreaming ? (
+        <form onSubmit={handleSubmit} className="relative">
+          {/* Slash Command Menu */}
+          {slashVisible && (
+            <SlashCommandMenu
+              commands={filteredCommands}
+              selectedIndex={slashIndex}
+              onSelect={(cmd) => {
+                const msg = selectSlashCommand(cmd);
+                setInput("");
+                onSendMessage(msg);
+              }}
+            />
+          )}
+
+          {/* Mention Menu */}
+          {mentionVisible && (
+            <MentionMenu
+              items={filteredMentions}
+              selectedIndex={mentionIndex}
+              onSelect={(item) => {
+                const cursorPos = inputRef.current?.selectionStart ?? input.length;
+                const { newValue, newCursorPos } = selectMention(item, input, cursorPos);
+                setInput(newValue);
+                requestAnimationFrame(() => {
+                  inputRef.current?.setSelectionRange(newCursorPos, newCursorPos);
+                  inputRef.current?.focus();
+                });
+              }}
+            />
+          )}
+
+          {/* 파일 첨부 미리보기 */}
+          <ChatFileAttachment files={attachedFiles} onRemove={removeFile} />
+
+          {/* 입력 바 */}
+          <div className="flex gap-2 items-end">
+            {/* 📎 파일 첨부 버튼 */}
             <button
               type="button"
-              onClick={onCancel}
-              className="px-4 py-2.5 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors text-sm font-medium shrink-0"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isStreaming}
+              className="p-2.5 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-40 shrink-0"
+              title="파일 첨부 (이미지, PDF)"
             >
-              중지
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
             </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={!input.trim()}
-              className="px-4 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-sm font-medium shrink-0"
-            >
-              전송
-            </button>
-          )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,application/pdf"
+              multiple
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => handleChange(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder="메시지를 입력하세요... ( / 명령어 · @ 멘션)"
+              className="flex-1 px-4 py-2.5 border border-gray-300 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent text-sm placeholder:text-gray-400"
+              rows={1}
+              style={{ minHeight: 42, maxHeight: 120 }}
+              disabled={isStreaming}
+            />
+            {isStreaming ? (
+              <button
+                type="button"
+                onClick={onCancel}
+                className="px-4 py-2.5 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors text-sm font-medium shrink-0"
+              >
+                중지
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!input.trim() && !attachedFiles.length}
+                className="px-4 py-2.5 bg-violet-600 text-white rounded-xl hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-sm font-medium shrink-0"
+              >
+                전송
+              </button>
+            )}
+          </div>
         </form>
 
         {/* 퀵 액션 */}

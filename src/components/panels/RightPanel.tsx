@@ -1,6 +1,6 @@
 // 우측 패널 - PI/CI/PL A4 문서 Progressive Rendering
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { useStreamingStore } from "../../stores/streamingStore";
@@ -10,6 +10,8 @@ import {
   downloadComplianceAsPDF,
   downloadTradeDocAsWord,
   downloadComplianceAsWord,
+  downloadProposalAsPDF,
+  downloadProposalAsWord,
 } from "../../lib/export/exportDocument";
 
 interface TradeItem {
@@ -116,6 +118,36 @@ interface SalesContractArgs {
   remarks?: string;
 }
 
+interface ProposalArgs {
+  document_type?: string;
+  document_number?: string;
+  issue_date?: string;
+  seller?: {
+    company_name?: string;
+    address?: string;
+    contact_person?: string;
+    email?: string;
+    phone?: string;
+  };
+  buyer?: {
+    company_name?: string;
+    address?: string;
+    country?: string;
+    contact_person?: string;
+    email?: string;
+  };
+  items?: TradeItem[];
+  proposal_sections?: {
+    company_overview?: string;
+    certifications?: string;
+    product_highlights?: string;
+    why_choose_us?: string;
+    partnership_terms?: string;
+    cta?: string;
+  };
+  remarks?: string;
+}
+
 interface ComplianceResult {
   inci_name?: string;
   percentage?: number;
@@ -143,6 +175,7 @@ const DOC_LABELS: Record<string, string> = {
   PL: "Packing List",
   NDA: "Non-Disclosure Agreement",
   SALES_CONTRACT: "Sales Contract",
+  PROPOSAL: "Business Proposal",
   COMPLIANCE: "Compliance Check",
 };
 
@@ -152,6 +185,7 @@ const DOC_TITLES: Record<string, string> = {
   PL: "PACKING LIST",
   NDA: "NON-DISCLOSURE AGREEMENT",
   SALES_CONTRACT: "SALES CONTRACT",
+  PROPOSAL: "BUSINESS PROPOSAL",
 };
 
 const COUNTRIES: Record<string, string> = {
@@ -179,6 +213,9 @@ export default function RightPanel() {
 
   const [pdfLoading, setPdfLoading] = useState(false);
   const [docxLoading, setDocxLoading] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [editedArgs, setEditedArgs] = useState<Record<string, unknown> | null>(null);
+  const originalArgsRef = useRef<Record<string, unknown> | null>(null);
 
   if (!rightPanelOpen) return null;
 
@@ -189,14 +226,59 @@ export default function RightPanel() {
     phase === "phase2_streaming" ||
     phase === "complete";
 
-  const docArgs = toolCall?.completedArgs ?? {};
+  const docArgs = editedArgs ?? toolCall?.completedArgs ?? {};
   const isCompliance = toolCall?.name === "check_compliance";
+  const isProposal = rightPanelDocType === "PROPOSAL";
+
+  const handleStartEdit = () => {
+    const original = toolCall?.completedArgs ?? {};
+    originalArgsRef.current = JSON.parse(JSON.stringify(original));
+    setEditedArgs(JSON.parse(JSON.stringify(original)));
+    setEditMode(true);
+    toast.success("편집 모드 활성화");
+  };
+
+  const handleRevert = () => {
+    if (originalArgsRef.current) {
+      setEditedArgs(JSON.parse(JSON.stringify(originalArgsRef.current)));
+      toast.success("원본으로 복원됨");
+    }
+  };
+
+  const handleSaveEdit = () => {
+    toast.success("변경사항 저장됨");
+  };
+
+  const handleFinishEdit = () => {
+    setEditMode(false);
+    toast.success("편집 완료");
+  };
+
+  const handleFieldChange = (path: string, value: string | number) => {
+    if (!editedArgs) return;
+    const updated = JSON.parse(JSON.stringify(editedArgs));
+    const keys = path.split(".");
+    let target = updated;
+    for (let i = 0; i < keys.length - 1; i++) {
+      const k = keys[i];
+      if (k.match(/^\d+$/)) {
+        target = target[parseInt(k)];
+      } else {
+        if (!target[k]) target[k] = {};
+        target = target[k];
+      }
+    }
+    target[keys[keys.length - 1]] = value;
+    setEditedArgs(updated);
+  };
 
   const handleDownloadPDF = async () => {
     setPdfLoading(true);
     try {
       if (isCompliance) {
         await downloadComplianceAsPDF(docArgs);
+      } else if (isProposal) {
+        await downloadProposalAsPDF(docArgs);
       } else {
         await downloadTradeDocAsPDF(docArgs, rightPanelDocType ?? "PI");
       }
@@ -213,6 +295,8 @@ export default function RightPanel() {
     try {
       if (isCompliance) {
         await downloadComplianceAsWord(docArgs);
+      } else if (isProposal) {
+        await downloadProposalAsWord(docArgs);
       } else {
         await downloadTradeDocAsWord(docArgs, rightPanelDocType ?? "PI");
       }
@@ -224,15 +308,6 @@ export default function RightPanel() {
     }
   };
 
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(docArgs, null, 2));
-      toast.success("클립보드에 복사됨");
-    } catch {
-      toast.error("클립보드 복사 실패");
-    }
-  };
-
   return (
     <div className="w-[520px] min-w-[520px] h-full border-l border-gray-200 bg-white flex flex-col shadow-xl">
       {/* 헤더 */}
@@ -240,12 +315,14 @@ export default function RightPanel() {
         <div className="flex items-center gap-3">
           <div
             className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm ${
-              isComplete
+              editMode
+                ? "bg-amber-100 text-amber-600"
+                : isComplete
                 ? "bg-emerald-100 text-emerald-600"
                 : "bg-blue-100 text-blue-600"
             }`}
           >
-            {isComplete ? "✓" : "📄"}
+            {editMode ? "✏️" : isComplete ? "✓" : "📄"}
           </div>
           <div>
             <h2 className="text-sm font-semibold text-gray-900">
@@ -254,10 +331,12 @@ export default function RightPanel() {
                 : "문서 생성 중..."}
             </h2>
             <p className="text-xs text-gray-500">
-              {isStreaming
+              {editMode
+                ? "편집 모드 — 필드를 클릭하여 수정"
+                : isStreaming
                 ? `AI 작성 중... ${toolCall?.partialParsed?.progress ?? 0}%`
                 : isComplete
-                ? "✅ 생성 완료"
+                ? "생성 완료"
                 : "준비 중..."}
             </p>
           </div>
@@ -283,6 +362,31 @@ export default function RightPanel() {
         </button>
       </div>
 
+      {/* 편집 툴바 */}
+      {editMode && (
+        <div className="border-b border-amber-200 px-5 py-2 flex items-center gap-2 bg-amber-50">
+          <button
+            onClick={handleSaveEdit}
+            className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-medium rounded-lg hover:bg-emerald-700 transition-colors"
+          >
+            저장
+          </button>
+          <button
+            onClick={handleRevert}
+            className="px-3 py-1.5 bg-white border border-gray-300 text-xs font-medium rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            되돌리기
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={handleFinishEdit}
+            className="px-3 py-1.5 bg-violet-600 text-white text-xs font-medium rounded-lg hover:bg-violet-700 transition-colors"
+          >
+            편집 완료
+          </button>
+        </div>
+      )}
+
       {/* 본문 */}
       <div className="flex-1 overflow-y-auto p-5">
         {toolCall ? (
@@ -291,6 +395,9 @@ export default function RightPanel() {
               toolCall={toolCall}
               docType={rightPanelDocType}
               isStreaming={isStreaming}
+              editMode={editMode}
+              editedArgs={editedArgs}
+              onFieldChange={handleFieldChange}
             />
           </FadeIn>
         ) : (
@@ -303,7 +410,7 @@ export default function RightPanel() {
         <div className="border-t border-gray-200 px-5 py-3 flex gap-2 bg-gray-50">
           <button
             onClick={handleDownloadPDF}
-            disabled={pdfLoading || docxLoading}
+            disabled={pdfLoading || docxLoading || editMode}
             className="flex-1 py-2 px-3 bg-violet-600 text-white text-sm font-medium rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
           >
             {pdfLoading ? (
@@ -315,7 +422,7 @@ export default function RightPanel() {
           </button>
           <button
             onClick={handleDownloadDocx}
-            disabled={pdfLoading || docxLoading}
+            disabled={pdfLoading || docxLoading || editMode}
             className="flex-1 py-2 px-3 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
           >
             {docxLoading ? (
@@ -325,16 +432,60 @@ export default function RightPanel() {
             )}
             Word
           </button>
-          <button
-            onClick={handleCopy}
-            disabled={pdfLoading || docxLoading}
-            className="flex-1 py-2 px-3 bg-white border border-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
-          >
-            ✏️ 편집
-          </button>
+          {!editMode ? (
+            <button
+              onClick={handleStartEdit}
+              disabled={pdfLoading || docxLoading}
+              className="flex-1 py-2 px-3 bg-white border border-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+            >
+              ✏️ 편집
+            </button>
+          ) : (
+            <button
+              onClick={handleFinishEdit}
+              className="flex-1 py-2 px-3 bg-amber-500 text-white text-sm font-medium rounded-lg hover:bg-amber-600 transition-colors flex items-center justify-center gap-1.5"
+            >
+              완료
+            </button>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+// --- 편집 가능 필드 컴포넌트 ---
+function EditableField({
+  value,
+  path,
+  editMode,
+  onFieldChange,
+  className = "",
+  type = "text",
+}: {
+  value: string | number | undefined;
+  path: string;
+  editMode: boolean;
+  onFieldChange: (path: string, value: string | number) => void;
+  className?: string;
+  type?: "text" | "number";
+}) {
+  if (!editMode) {
+    return <>{value ?? "—"}</>;
+  }
+
+  return (
+    <span
+      contentEditable
+      suppressContentEditableWarning
+      className={`outline-none border-b border-dashed border-amber-400 bg-amber-50/50 px-0.5 focus:bg-amber-100/50 focus:border-amber-500 transition-colors cursor-text ${className}`}
+      onBlur={(e) => {
+        const text = e.currentTarget.textContent ?? "";
+        onFieldChange(path, type === "number" ? parseFloat(text) || 0 : text);
+      }}
+    >
+      {value ?? ""}
+    </span>
   );
 }
 
@@ -343,16 +494,23 @@ function DocRenderer({
   toolCall,
   docType,
   isStreaming,
+  editMode,
+  editedArgs,
+  onFieldChange,
 }: {
   toolCall: ToolCallInfo;
   docType: DocumentType;
   isStreaming: boolean;
+  editMode: boolean;
+  editedArgs: Record<string, unknown> | null;
+  onFieldChange: (path: string, value: string | number) => void;
 }) {
   const data = useMemo(() => {
+    if (editedArgs) return editedArgs;
     if (toolCall.isComplete && toolCall.completedArgs)
       return toolCall.completedArgs;
     return (toolCall.partialParsed?.parsed as Record<string, unknown>) ?? null;
-  }, [toolCall.isComplete, toolCall.completedArgs, toolCall.partialParsed]);
+  }, [toolCall.isComplete, toolCall.completedArgs, toolCall.partialParsed, editedArgs]);
 
   if (!data) return <FullSkeleton />;
 
@@ -371,6 +529,8 @@ function DocRenderer({
       <NdaDocView
         data={data as unknown as NdaArgs}
         isStreaming={isStreaming}
+        editMode={editMode}
+        onFieldChange={onFieldChange}
       />
     );
 
@@ -379,6 +539,18 @@ function DocRenderer({
       <SalesContractView
         data={data as unknown as SalesContractArgs}
         isStreaming={isStreaming}
+        editMode={editMode}
+        onFieldChange={onFieldChange}
+      />
+    );
+
+  if (dt === "PROPOSAL")
+    return (
+      <ProposalView
+        data={data as unknown as ProposalArgs}
+        isStreaming={isStreaming}
+        editMode={editMode}
+        onFieldChange={onFieldChange}
       />
     );
 
@@ -386,6 +558,8 @@ function DocRenderer({
     <TradeDocView
       data={data as unknown as TradeDocArgs}
       isStreaming={isStreaming}
+      editMode={editMode}
+      onFieldChange={onFieldChange}
     />
   );
 }
@@ -394,10 +568,15 @@ function DocRenderer({
 function TradeDocView({
   data,
   isStreaming,
+  editMode = false,
+  onFieldChange,
 }: {
   data: TradeDocArgs;
   isStreaming: boolean;
+  editMode?: boolean;
+  onFieldChange?: (path: string, value: string | number) => void;
 }) {
+  const fc = onFieldChange ?? (() => {});
   const items = data.items || [];
   const total = items.reduce(
     (s, i) => s + (i.quantity ?? 0) * (i.unit_price ?? 0),
@@ -420,9 +599,9 @@ function TradeDocView({
         </h1>
         <div className="flex justify-between mt-3 text-[10px] text-gray-600">
           <span>
-            No: {data.document_number || <Sk w={80} s={isStreaming} />}
+            No: {editMode ? <EditableField value={data.document_number} path="document_number" editMode={editMode} onFieldChange={fc} /> : data.document_number || <Sk w={80} s={isStreaming} />}
           </span>
-          <span>Date: {data.issue_date || <Sk w={80} s={isStreaming} />}</span>
+          <span>Date: {editMode ? <EditableField value={data.issue_date} path="issue_date" editMode={editMode} onFieldChange={fc} /> : data.issue_date || <Sk w={80} s={isStreaming} />}</span>
         </div>
       </div>
 
@@ -434,15 +613,17 @@ function TradeDocView({
           </h3>
           {data.seller ? (
             <div className="space-y-0.5 text-gray-800">
-              <p className="font-semibold">{data.seller.company_name}</p>
-              {data.seller.address && <p>{data.seller.address}</p>}
-              {data.seller.contact_person && (
-                <p>{data.seller.contact_person}</p>
+              <p className="font-semibold">
+                {editMode ? <EditableField value={data.seller.company_name} path="seller.company_name" editMode={editMode} onFieldChange={fc} /> : data.seller.company_name}
+              </p>
+              {(data.seller.address || editMode) && <p>{editMode ? <EditableField value={data.seller.address} path="seller.address" editMode={editMode} onFieldChange={fc} /> : data.seller.address}</p>}
+              {(data.seller.contact_person || editMode) && (
+                <p>{editMode ? <EditableField value={data.seller.contact_person} path="seller.contact_person" editMode={editMode} onFieldChange={fc} /> : data.seller.contact_person}</p>
               )}
-              {data.seller.email && (
-                <p className="text-blue-700">{data.seller.email}</p>
+              {(data.seller.email || editMode) && (
+                <p className="text-blue-700">{editMode ? <EditableField value={data.seller.email} path="seller.email" editMode={editMode} onFieldChange={fc} /> : data.seller.email}</p>
               )}
-              {data.seller.phone && <p>{data.seller.phone}</p>}
+              {(data.seller.phone || editMode) && <p>{editMode ? <EditableField value={data.seller.phone} path="seller.phone" editMode={editMode} onFieldChange={fc} /> : data.seller.phone}</p>}
             </div>
           ) : (
             <LineSkeleton n={3} s={isStreaming} />
@@ -454,14 +635,16 @@ function TradeDocView({
           </h3>
           {data.buyer ? (
             <div className="space-y-0.5 text-gray-800">
-              <p className="font-semibold">{data.buyer.company_name}</p>
-              {data.buyer.address && <p>{data.buyer.address}</p>}
-              {data.buyer.country && <p>{data.buyer.country}</p>}
-              {data.buyer.contact_person && (
-                <p>{data.buyer.contact_person}</p>
+              <p className="font-semibold">
+                {editMode ? <EditableField value={data.buyer.company_name} path="buyer.company_name" editMode={editMode} onFieldChange={fc} /> : data.buyer.company_name}
+              </p>
+              {(data.buyer.address || editMode) && <p>{editMode ? <EditableField value={data.buyer.address} path="buyer.address" editMode={editMode} onFieldChange={fc} /> : data.buyer.address}</p>}
+              {(data.buyer.country || editMode) && <p>{editMode ? <EditableField value={data.buyer.country} path="buyer.country" editMode={editMode} onFieldChange={fc} /> : data.buyer.country}</p>}
+              {(data.buyer.contact_person || editMode) && (
+                <p>{editMode ? <EditableField value={data.buyer.contact_person} path="buyer.contact_person" editMode={editMode} onFieldChange={fc} /> : data.buyer.contact_person}</p>
               )}
-              {data.buyer.email && (
-                <p className="text-blue-700">{data.buyer.email}</p>
+              {(data.buyer.email || editMode) && (
+                <p className="text-blue-700">{editMode ? <EditableField value={data.buyer.email} path="buyer.email" editMode={editMode} onFieldChange={fc} /> : data.buyer.email}</p>
               )}
             </div>
           ) : (
@@ -509,10 +692,10 @@ function TradeDocView({
                     {item.hs_code || "—"}
                   </td>
                   <td className="border border-gray-300 px-1.5 py-1 text-right">
-                    {item.quantity?.toLocaleString() ?? "—"}
+                    {editMode ? <EditableField value={item.quantity} path={`items.${i}.quantity`} editMode={editMode} onFieldChange={fc} type="number" /> : item.quantity?.toLocaleString() ?? "—"}
                   </td>
                   <td className="border border-gray-300 px-1.5 py-1 text-right">
-                    {item.unit_price != null
+                    {editMode ? <EditableField value={item.unit_price} path={`items.${i}.unit_price`} editMode={editMode} onFieldChange={fc} type="number" /> : item.unit_price != null
                       ? `${item.currency || "USD"} ${item.unit_price.toFixed(2)}`
                       : "—"}
                   </td>
@@ -559,11 +742,23 @@ function TradeDocView({
             Trade Terms
           </h3>
           <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-            <KV k="Incoterms" v={data.trade_terms?.incoterms} s={isStreaming} />
-            <KV k="Payment" v={data.trade_terms?.payment_terms} s={isStreaming} />
-            <KV k="Port of Loading" v={data.trade_terms?.port_of_loading} s={isStreaming} />
-            <KV k="Port of Discharge" v={data.trade_terms?.port_of_discharge} s={isStreaming} />
-            <KV k="Validity" v={data.trade_terms?.validity_date} s={isStreaming} />
+            {editMode ? (
+              <>
+                <KVEdit k="Incoterms" v={data.trade_terms?.incoterms} path="trade_terms.incoterms" editMode={editMode} onFieldChange={fc} />
+                <KVEdit k="Payment" v={data.trade_terms?.payment_terms} path="trade_terms.payment_terms" editMode={editMode} onFieldChange={fc} />
+                <KVEdit k="Port of Loading" v={data.trade_terms?.port_of_loading} path="trade_terms.port_of_loading" editMode={editMode} onFieldChange={fc} />
+                <KVEdit k="Port of Discharge" v={data.trade_terms?.port_of_discharge} path="trade_terms.port_of_discharge" editMode={editMode} onFieldChange={fc} />
+                <KVEdit k="Validity" v={data.trade_terms?.validity_date} path="trade_terms.validity_date" editMode={editMode} onFieldChange={fc} />
+              </>
+            ) : (
+              <>
+                <KV k="Incoterms" v={data.trade_terms?.incoterms} s={isStreaming} />
+                <KV k="Payment" v={data.trade_terms?.payment_terms} s={isStreaming} />
+                <KV k="Port of Loading" v={data.trade_terms?.port_of_loading} s={isStreaming} />
+                <KV k="Port of Discharge" v={data.trade_terms?.port_of_discharge} s={isStreaming} />
+                <KV k="Validity" v={data.trade_terms?.validity_date} s={isStreaming} />
+              </>
+            )}
           </div>
         </div>
       )}
@@ -598,12 +793,14 @@ function TradeDocView({
       )}
 
       {/* Remarks */}
-      {data.remarks && (
+      {(data.remarks || editMode) && (
         <div className="border-t border-gray-300 px-4 py-2.5">
           <h3 className="font-bold text-gray-700 uppercase tracking-wide mb-1 text-[9px]">
             Remarks
           </h3>
-          <p className="text-gray-600 whitespace-pre-wrap">{data.remarks}</p>
+          <p className="text-gray-600 whitespace-pre-wrap">
+            {editMode ? <EditableField value={data.remarks} path="remarks" editMode={editMode} onFieldChange={fc} /> : data.remarks}
+          </p>
         </div>
       )}
 
@@ -627,10 +824,15 @@ function TradeDocView({
 function NdaDocView({
   data,
   isStreaming,
+  editMode = false,
+  onFieldChange,
 }: {
   data: NdaArgs;
   isStreaming: boolean;
+  editMode?: boolean;
+  onFieldChange?: (path: string, value: string | number) => void;
 }) {
+  const fc = onFieldChange ?? (() => {});
   const nt = data.nda_terms;
   return (
     <div
@@ -759,10 +961,15 @@ function NdaClause({
 function SalesContractView({
   data,
   isStreaming,
+  editMode = false,
+  onFieldChange,
 }: {
   data: SalesContractArgs;
   isStreaming: boolean;
+  editMode?: boolean;
+  onFieldChange?: (path: string, value: string | number) => void;
 }) {
+  const fc = onFieldChange ?? (() => {});
   const items = data.items || [];
   const currency = items[0]?.currency || "USD";
   const total = items.reduce((s, i) => s + (i.quantity ?? 0) * (i.unit_price ?? 0), 0);
@@ -952,6 +1159,326 @@ function SalesContractView({
   );
 }
 
+// --- 제안서/소개서 뷰 (B2B Standard) ---
+function ProposalView({
+  data,
+  isStreaming,
+  editMode = false,
+  onFieldChange,
+}: {
+  data: ProposalArgs;
+  isStreaming: boolean;
+  editMode?: boolean;
+  onFieldChange?: (path: string, value: string | number) => void;
+}) {
+  const fc = onFieldChange ?? (() => {});
+  const items = data.items || [];
+  const ps = data.proposal_sections;
+  const total = items.reduce(
+    (s, i) => s + (i.quantity ?? 0) * (i.unit_price ?? 0),
+    0
+  );
+  const currency = items[0]?.currency || "USD";
+
+  return (
+    <div
+      className="bg-white border border-gray-300 shadow-md rounded-sm mx-auto text-[11px] leading-relaxed"
+      style={{
+        maxWidth: "480px",
+        fontFamily: "'Segoe UI', -apple-system, sans-serif",
+      }}
+    >
+      {/* 브랜드 헤더 */}
+      <div
+        className="px-6 py-5 text-center"
+        style={{
+          background: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
+        }}
+      >
+        <div className="flex items-center justify-center gap-2 mb-2">
+          <div className="w-7 h-7 bg-white/20 rounded-lg flex items-center justify-center text-white font-bold text-sm">
+            F
+          </div>
+          <span className="text-white/80 text-xs font-medium tracking-wider uppercase">
+            {data.seller?.company_name || "FLONIX"}
+          </span>
+        </div>
+        <h1 className="text-lg font-bold tracking-wide text-white">
+          BUSINESS PROPOSAL
+        </h1>
+        <div className="flex justify-between mt-3 text-[10px] text-white/70">
+          <span>
+            No: {data.document_number || <Sk w={80} s={isStreaming} />}
+          </span>
+          <span>Date: {data.issue_date || <Sk w={80} s={isStreaming} />}</span>
+        </div>
+      </div>
+
+      {/* TO: 바이어 정보 */}
+      <div className="px-5 py-3 bg-violet-50 border-b border-violet-100">
+        <h3 className="font-bold text-violet-600 uppercase tracking-wide mb-1.5 text-[9px]">
+          PREPARED FOR
+        </h3>
+        {data.buyer ? (
+          <div className="space-y-0.5 text-gray-800">
+            <p className="font-semibold text-sm">{data.buyer.company_name}</p>
+            {data.buyer.country && (
+              <p className="text-gray-500">{data.buyer.country}</p>
+            )}
+            {data.buyer.contact_person && (
+              <p>{data.buyer.contact_person}</p>
+            )}
+            {data.buyer.email && (
+              <p className="text-violet-600">{data.buyer.email}</p>
+            )}
+          </div>
+        ) : (
+          <LineSkeleton n={3} s={isStreaming} />
+        )}
+      </div>
+
+      {/* FROM: 셀러 정보 */}
+      <div className="px-5 py-3 border-b border-gray-200">
+        <h3 className="font-bold text-gray-500 uppercase tracking-wide mb-1.5 text-[9px]">
+          PRESENTED BY
+        </h3>
+        {data.seller ? (
+          <div className="space-y-0.5 text-gray-800">
+            <p className="font-semibold">{data.seller.company_name}</p>
+            {data.seller.address && <p>{data.seller.address}</p>}
+            {data.seller.contact_person && (
+              <p>{data.seller.contact_person}</p>
+            )}
+            {data.seller.email && (
+              <p className="text-violet-600">{data.seller.email}</p>
+            )}
+            {data.seller.phone && <p>{data.seller.phone}</p>}
+          </div>
+        ) : (
+          <LineSkeleton n={3} s={isStreaming} />
+        )}
+      </div>
+
+      {/* SECTION 1: Company Overview */}
+      {ps?.company_overview && (
+        <div className="px-5 py-4 border-b border-gray-200">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-bold">
+              1
+            </span>
+            <h4 className="font-bold text-gray-800 text-xs uppercase tracking-wide">
+              Company Overview
+            </h4>
+          </div>
+          <p className="text-gray-700 text-[11px] leading-relaxed whitespace-pre-wrap">
+            {ps.company_overview}
+          </p>
+          {ps.certifications && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {ps.certifications.split(/[,;·]/).map((cert, i) => (
+                <span
+                  key={i}
+                  className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-full text-[9px] font-medium border border-emerald-200"
+                >
+                  {cert.trim()}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SECTION 2: Product Portfolio */}
+      <div className="px-5 py-4 border-b border-gray-200">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-bold">
+            2
+          </span>
+          <h4 className="font-bold text-gray-800 text-xs uppercase tracking-wide">
+            Product Portfolio
+          </h4>
+        </div>
+
+        {ps?.product_highlights && (
+          <p className="text-gray-600 text-[10px] mb-3 whitespace-pre-wrap">
+            {ps.product_highlights}
+          </p>
+        )}
+
+        {items.length > 0 ? (
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <table className="w-full text-[10px]">
+              <thead>
+                <tr className="bg-violet-50">
+                  <th className="py-2 px-2 text-left text-violet-700 font-semibold">
+                    Product
+                  </th>
+                  <th className="py-2 px-2 text-center text-violet-700 font-semibold">
+                    HS Code
+                  </th>
+                  <th className="py-2 px-2 text-right text-violet-700 font-semibold">
+                    Qty
+                  </th>
+                  <th className="py-2 px-2 text-right text-violet-700 font-semibold">
+                    Unit Price
+                  </th>
+                  <th className="py-2 px-2 text-right text-violet-700 font-semibold">
+                    Amount
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item, i) => (
+                  <tr
+                    key={i}
+                    className={`${
+                      i % 2 === 0 ? "bg-white" : "bg-gray-50/50"
+                    } border-t border-gray-100`}
+                  >
+                    <td className="py-1.5 px-2 font-medium text-gray-800">
+                      {item.product_name || <Sk w={80} s={isStreaming} />}
+                    </td>
+                    <td className="py-1.5 px-2 text-center text-gray-500 font-mono">
+                      {item.hs_code || "—"}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-gray-700">
+                      {item.quantity?.toLocaleString() || "—"}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-gray-700">
+                      {item.unit_price != null
+                        ? `${item.currency ?? "USD"} ${item.unit_price.toFixed(2)}`
+                        : "—"}
+                    </td>
+                    <td className="py-1.5 px-2 text-right font-semibold text-gray-900">
+                      {item.quantity != null && item.unit_price != null
+                        ? `${item.currency ?? "USD"} ${(item.quantity * item.unit_price).toFixed(2)}`
+                        : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {items.length > 0 && (
+                <tfoot>
+                  <tr className="border-t-2 border-violet-200 bg-violet-50">
+                    <td
+                      colSpan={4}
+                      className="py-2 px-2 text-right font-bold text-violet-700 text-[10px]"
+                    >
+                      TOTAL
+                    </td>
+                    <td className="py-2 px-2 text-right font-bold text-violet-800 text-xs">
+                      {currency} {total.toFixed(2)}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        ) : (
+          <div className="text-center py-4 text-gray-400 text-[10px]">
+            {isStreaming ? (
+              <Dots label="제품 목록 로딩" />
+            ) : (
+              "제품 정보 없음"
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* SECTION 3: Why Choose Us */}
+      {ps?.why_choose_us && (
+        <div className="px-5 py-4 border-b border-gray-200">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-bold">
+              3
+            </span>
+            <h4 className="font-bold text-gray-800 text-xs uppercase tracking-wide">
+              Why Choose Us
+            </h4>
+          </div>
+          <p className="text-gray-700 text-[11px] leading-relaxed whitespace-pre-wrap">
+            {ps.why_choose_us}
+          </p>
+        </div>
+      )}
+
+      {/* SECTION 3.5: Partnership Terms */}
+      {ps?.partnership_terms && (
+        <div className="px-5 py-4 border-b border-gray-200">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-bold">
+              +
+            </span>
+            <h4 className="font-bold text-gray-800 text-xs uppercase tracking-wide">
+              Partnership Terms
+            </h4>
+          </div>
+          <p className="text-gray-700 text-[11px] leading-relaxed whitespace-pre-wrap">
+            {ps.partnership_terms}
+          </p>
+        </div>
+      )}
+
+      {/* Remarks */}
+      {data.remarks && (
+        <div className="px-5 py-3 border-b border-gray-200">
+          <h4 className="font-bold text-gray-500 text-[9px] uppercase tracking-wide mb-1">
+            Remarks
+          </h4>
+          <p className="text-gray-600 text-[10px] whitespace-pre-wrap">
+            {data.remarks}
+          </p>
+        </div>
+      )}
+
+      {/* SECTION 4: Contact & Next Steps (CTA) */}
+      <div
+        className="px-5 py-5 text-center"
+        style={{
+          background: "linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)",
+        }}
+      >
+        <div className="flex items-center gap-2 justify-center mb-3">
+          <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-violet-200 text-violet-700 text-[9px] font-bold">
+            4
+          </span>
+          <h4 className="font-bold text-violet-800 text-xs uppercase tracking-wide">
+            Contact & Next Steps
+          </h4>
+        </div>
+        {ps?.cta ? (
+          <p className="text-violet-700 text-[11px] leading-relaxed whitespace-pre-wrap">
+            {ps.cta}
+          </p>
+        ) : (
+          <div className="space-y-1">
+            {data.seller?.contact_person && (
+              <p className="text-gray-700 text-[11px] font-medium">
+                {data.seller.contact_person}
+              </p>
+            )}
+            {data.seller?.email && (
+              <p className="text-violet-600 text-[11px]">
+                {data.seller.email}
+              </p>
+            )}
+            {data.seller?.phone && (
+              <p className="text-gray-500 text-[10px]">{data.seller.phone}</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 푸터 */}
+      <div className="px-5 py-2.5 text-center border-t border-gray-200">
+        <p className="text-[9px] text-gray-400">
+          Generated by FLONIX AI · Confidential · {new Date().toLocaleDateString("ko-KR")}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // --- 컴플라이언스 뷰 (Rich UI) ---
 function ComplianceView({
   data,
@@ -1134,6 +1661,29 @@ function KV({ k, v, s }: { k: string; v?: string; s: boolean }) {
   );
 }
 
+function KVEdit({
+  k,
+  v,
+  path,
+  editMode,
+  onFieldChange,
+}: {
+  k: string;
+  v?: string;
+  path: string;
+  editMode: boolean;
+  onFieldChange: (path: string, value: string | number) => void;
+}) {
+  return (
+    <div className="flex gap-1 text-[10px]">
+      <span className="text-gray-500 shrink-0">{k}:</span>
+      <span className="font-medium text-gray-800">
+        <EditableField value={v} path={path} editMode={editMode} onFieldChange={onFieldChange} />
+      </span>
+    </div>
+  );
+}
+
 function LineSkeleton({ n, s }: { n: number; s: boolean }) {
   if (!s) return null;
   return (
@@ -1170,6 +1720,47 @@ function FadeIn({ children }: { children: React.ReactNode }) {
 
 function DocumentSkeleton({ docType }: { docType: DocumentType }) {
   const label = docType ? DOC_LABELS[docType] || docType : "문서";
+  const isCompliance = docType === "COMPLIANCE";
+
+  if (isCompliance) {
+    return (
+      <div className="space-y-4 animate-pulse">
+        {/* 제품 헤더 스켈레톤 */}
+        <div className="border border-blue-200 bg-blue-50 rounded-xl p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 space-y-2">
+              <div className="h-5 bg-blue-200 rounded w-40" />
+              <div className="h-4 bg-blue-100 rounded w-32" />
+              <div className="h-5 bg-white/70 rounded-full w-20 mt-1" />
+            </div>
+            <div className="h-8 bg-blue-200 rounded-lg w-20" />
+          </div>
+        </div>
+
+        {/* 성분 결과 스켈레톤 */}
+        <div className="space-y-2">
+          <div className="h-5 bg-gray-200 rounded w-36 mb-3" />
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="rounded-xl border border-gray-200 p-3 space-y-2">
+              <div className="flex justify-between">
+                <div className="h-4 bg-gray-200 rounded w-28" />
+                <div className="h-5 bg-gray-100 rounded-full w-16" />
+              </div>
+              <div className="h-3 bg-gray-100 rounded w-full" />
+              <div className="h-3 bg-gray-100 rounded w-3/4" />
+            </div>
+          ))}
+        </div>
+
+        {/* 로딩 인디케이터 */}
+        <div className="flex items-center justify-center gap-2 py-3">
+          <div className="w-5 h-5 border-2 border-violet-300 border-t-violet-600 rounded-full animate-spin" />
+          <span className="text-sm text-gray-500">규제 검토 중...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4 animate-pulse">
       {/* 문서 타이틀 스켈레톤 */}

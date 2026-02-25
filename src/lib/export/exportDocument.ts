@@ -3,7 +3,7 @@
 
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-  WidthType, HeadingLevel, AlignmentType,
+  WidthType, HeadingLevel, AlignmentType, convertMillimetersToTwip,
 } from 'docx';
 import { saveAs } from 'file-saver';
 
@@ -48,6 +48,36 @@ interface TradeDocArgs {
   remarks?: string;
 }
 
+interface ProposalArgs {
+  document_type?: string;
+  document_number?: string;
+  issue_date?: string;
+  seller?: {
+    company_name?: string;
+    address?: string;
+    contact_person?: string;
+    email?: string;
+    phone?: string;
+  };
+  buyer?: {
+    company_name?: string;
+    address?: string;
+    country?: string;
+    contact_person?: string;
+    email?: string;
+  };
+  items?: TradeItem[];
+  proposal_sections?: {
+    company_overview?: string;
+    certifications?: string;
+    product_highlights?: string;
+    why_choose_us?: string;
+    partnership_terms?: string;
+    cta?: string;
+  };
+  remarks?: string;
+}
+
 interface ComplianceArgs {
   product_name?: string;
   target_country?: string;
@@ -62,6 +92,7 @@ const DOC_TITLE: Record<string, string> = {
   PL: 'PACKING LIST',
   NDA: 'NON-DISCLOSURE AGREEMENT',
   SALES_CONTRACT: 'SALES CONTRACT',
+  PROPOSAL: 'BUSINESS PROPOSAL',
   COMPLIANCE: 'COMPLIANCE CHECK REPORT',
 };
 
@@ -88,41 +119,61 @@ function triggerDownload(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-// ─── HTML → PDF Blob ────────────────────────────────────────────────────────
+// ─── HTML → PDF Blob (고품질 렌더링) ────────────────────────────────────────
 async function htmlToBlob(html: string): Promise<Blob> {
   const { default: jsPDF } = await import('jspdf');
   const { default: html2canvas } = await import('html2canvas');
 
   const wrap = document.createElement('div');
   wrap.innerHTML = html;
-  wrap.style.cssText = 'position:absolute;left:-9999px;top:0;width:794px;background:#fff;';
+  wrap.style.cssText = 'position:absolute;left:-9999px;top:0;width:794px;background:#fff;font-smooth:always;-webkit-font-smoothing:antialiased;';
   document.body.appendChild(wrap);
 
   try {
+    // 고해상도 캔버스 (300 DPI 상당)
+    const dpiScale = 3;
     const canvas = await html2canvas(wrap, {
-      scale: 2,
+      scale: dpiScale,
       useCORS: true,
       logging: false,
       width: 794,
       backgroundColor: '#ffffff',
+      imageTimeout: 15000,
+      removeContainer: false,
     });
 
-    const imgData = canvas.toDataURL('image/jpeg', 0.95);
-    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    // PNG 포맷으로 고품질 유지 (JPEG 아티팩트 방지)
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
     const pdfW = pdf.internal.pageSize.getWidth();
     const pdfH = pdf.internal.pageSize.getHeight();
-    const imgH = (canvas.height * pdfW) / canvas.width;
 
-    let pos = 0;
+    // A4 여백 설정 (상하 15mm, 좌우 10mm)
+    const marginX = 10;
+    const marginY = 15;
+    const contentW = pdfW - marginX * 2;
+    const contentH = pdfH - marginY * 2;
+    const imgH = (canvas.height * contentW) / canvas.width;
+
+    let pos = marginY;
     let rem = imgH;
-    pdf.addImage(imgData, 'JPEG', 0, pos, pdfW, imgH);
-    rem -= pdfH;
+    pdf.addImage(imgData, 'PNG', marginX, pos, contentW, imgH);
+    rem -= contentH;
 
     while (rem > 0) {
-      pos -= pdfH;
+      pos -= contentH;
       pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', 0, pos, pdfW, imgH);
-      rem -= pdfH;
+      pdf.addImage(imgData, 'PNG', marginX, pos, contentW, imgH);
+      rem -= contentH;
+    }
+
+    // 페이지 번호 + 푸터
+    const totalPages = pdf.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      pdf.setPage(i);
+      pdf.setFontSize(8);
+      pdf.setTextColor(170, 170, 170);
+      pdf.text(`Page ${i} / ${totalPages}`, pdfW - marginX, pdfH - 5, { align: 'right' });
     }
 
     return pdf.output('blob');
@@ -348,6 +399,363 @@ td { border: 1px solid #dbeafe; padding: 7px 8px; color: #1e3a8a; }
 </div></body></html>`;
 }
 
+// ─── 제안서 HTML ────────────────────────────────────────────────────────────
+function buildProposalHTML(args: ProposalArgs): string {
+  const items = args.items ?? [];
+  const currency = items[0]?.currency ?? 'USD';
+  const total = items.reduce((s, i) => s + (i.quantity ?? 0) * (i.unit_price ?? 0), 0);
+  const ps = args.proposal_sections;
+
+  const itemRows = items
+    .map(
+      (item, i) => `
+      <tr style="background:${i % 2 === 0 ? '#fff' : '#faf5ff'}">
+        <td style="padding:6px 8px;font-weight:600">${item.product_name ?? '—'}</td>
+        <td style="padding:6px 8px;text-align:center;font-family:monospace;font-size:10px;color:#666">${item.hs_code ?? '—'}</td>
+        <td style="padding:6px 8px;text-align:right">${item.quantity?.toLocaleString() ?? '—'}</td>
+        <td style="padding:6px 8px;text-align:right">${
+          item.unit_price != null
+            ? `${item.currency ?? 'USD'} ${item.unit_price.toFixed(2)}`
+            : '—'
+        }</td>
+        <td style="padding:6px 8px;text-align:right;font-weight:600">${
+          item.quantity != null && item.unit_price != null
+            ? `${item.currency ?? 'USD'} ${(item.quantity * item.unit_price).toFixed(2)}`
+            : '—'
+        }</td>
+      </tr>`,
+    )
+    .join('');
+
+  const certBadges = ps?.certifications
+    ? ps.certifications
+        .split(/[,;·]/)
+        .map(
+          (c) =>
+            `<span style="display:inline-block;margin:2px;padding:2px 8px;background:#ecfdf5;color:#059669;border-radius:999px;font-size:9px;border:1px solid #a7f3d0">${c.trim()}</span>`,
+        )
+        .join('')
+    : '';
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 11px; color: #111; background: #fff; }
+.page { width: 794px; padding: 0; }
+.header { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); padding: 30px 50px; text-align: center; color: #fff; }
+.header h1 { font-size: 20px; font-weight: 700; letter-spacing: .15em; margin-bottom: 6px; }
+.header .meta { font-size: 10px; color: rgba(255,255,255,.7); display: flex; justify-content: space-between; }
+.section { padding: 16px 50px; border-bottom: 1px solid #e5e7eb; }
+.section-num { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: #ede9fe; color: #6366f1; font-size: 10px; font-weight: 700; margin-right: 6px; }
+.section-title { font-size: 12px; font-weight: 700; color: #1f2937; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
+table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 10px; }
+th { padding: 8px; background: #f5f3ff; color: #6366f1; font-weight: 600; border-bottom: 2px solid #c4b5fd; text-align: left; }
+td { padding: 6px 8px; border-bottom: 1px solid #f3e8ff; }
+.total-row td { font-weight: 700; background: #f5f3ff; border-top: 2px solid #c4b5fd; color: #4f46e5; }
+.cta { background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%); padding: 24px 50px; text-align: center; }
+.footer { padding: 12px 50px; font-size: 9px; color: #9ca3af; text-align: center; border-top: 1px solid #f0f0f0; }
+</style></head>
+<body><div class="page">
+  <div class="header">
+    <div style="font-size:12px;color:rgba(255,255,255,.8);margin-bottom:4px;letter-spacing:.2em">${args.seller?.company_name ?? 'FLONIX'}</div>
+    <h1>BUSINESS PROPOSAL</h1>
+    <div class="meta">
+      <span>No: ${args.document_number ?? '—'}</span>
+      <span>Date: ${args.issue_date ?? new Date().toISOString().slice(0, 10)}</span>
+    </div>
+  </div>
+
+  <div class="section" style="background:#f5f3ff">
+    <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#7c3aed;margin-bottom:4px">PREPARED FOR</div>
+    <div style="font-weight:600;font-size:13px">${args.buyer?.company_name ?? '—'}</div>
+    ${args.buyer?.country ? `<div style="color:#666;margin-top:2px">${args.buyer.country}</div>` : ''}
+    ${args.buyer?.contact_person ? `<div style="margin-top:2px">${args.buyer.contact_person}</div>` : ''}
+    ${args.buyer?.email ? `<div style="color:#6366f1;margin-top:2px">${args.buyer.email}</div>` : ''}
+  </div>
+
+  ${
+    ps?.company_overview
+      ? `<div class="section">
+    <div class="section-title"><span class="section-num">1</span> Company Overview</div>
+    <p style="color:#374151;line-height:1.6">${ps.company_overview}</p>
+    ${certBadges ? `<div style="margin-top:8px">${certBadges}</div>` : ''}
+  </div>`
+      : ''
+  }
+
+  <div class="section">
+    <div class="section-title"><span class="section-num">2</span> Product Portfolio</div>
+    ${ps?.product_highlights ? `<p style="color:#666;margin-bottom:8px">${ps.product_highlights}</p>` : ''}
+    ${
+      items.length > 0
+        ? `<table>
+      <thead><tr>
+        <th style="text-align:left">Product</th>
+        <th style="text-align:center">HS Code</th>
+        <th style="text-align:right">Qty</th>
+        <th style="text-align:right">Unit Price</th>
+        <th style="text-align:right">Amount</th>
+      </tr></thead>
+      <tbody>${itemRows}</tbody>
+      <tfoot><tr class="total-row">
+        <td colspan="4" style="text-align:right">TOTAL</td>
+        <td style="text-align:right">${currency} ${total.toFixed(2)}</td>
+      </tr></tfoot>
+    </table>`
+        : '<p style="color:#9ca3af">제품 정보 없음</p>'
+    }
+  </div>
+
+  ${
+    ps?.why_choose_us
+      ? `<div class="section">
+    <div class="section-title"><span class="section-num">3</span> Why Choose Us</div>
+    <p style="color:#374151;line-height:1.6">${ps.why_choose_us}</p>
+  </div>`
+      : ''
+  }
+
+  ${
+    ps?.partnership_terms
+      ? `<div class="section">
+    <div class="section-title"><span class="section-num">+</span> Partnership Terms</div>
+    <p style="color:#374151;line-height:1.6">${ps.partnership_terms}</p>
+  </div>`
+      : ''
+  }
+
+  ${
+    args.remarks
+      ? `<div class="section">
+    <div style="font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#888;margin-bottom:4px">Remarks</div>
+    <p style="color:#666">${args.remarks}</p>
+  </div>`
+      : ''
+  }
+
+  <div class="cta">
+    <div class="section-title"><span class="section-num">4</span> Contact & Next Steps</div>
+    ${
+      ps?.cta
+        ? `<p style="color:#4f46e5;line-height:1.6">${ps.cta}</p>`
+        : `<div>
+      ${args.seller?.contact_person ? `<p style="font-weight:600">${args.seller.contact_person}</p>` : ''}
+      ${args.seller?.email ? `<p style="color:#6366f1">${args.seller.email}</p>` : ''}
+      ${args.seller?.phone ? `<p style="color:#666">${args.seller.phone}</p>` : ''}
+    </div>`
+    }
+  </div>
+
+  <div class="footer">Generated by FLONIX AI · Confidential · ${new Date().toLocaleDateString('ko-KR')}</div>
+</div></body></html>`;
+}
+
+// ─── 제안서 DOCX ────────────────────────────────────────────────────────────
+function buildProposalDOCX(args: ProposalArgs): Document {
+  const items = args.items ?? [];
+  const currency = items[0]?.currency ?? 'USD';
+  const total = items.reduce((s, i) => s + (i.quantity ?? 0) * (i.unit_price ?? 0), 0);
+  const ps = args.proposal_sections;
+
+  const headerRow = new TableRow({
+    tableHeader: true,
+    children: ['Product', 'HS Code', 'Qty', 'Unit Price', 'Amount'].map(
+      (h) =>
+        new TableCell({
+          children: [
+            new Paragraph({
+              children: [new TextRun({ text: h, bold: true, color: '6366F1' })],
+              alignment: h === 'Product' ? AlignmentType.LEFT : AlignmentType.CENTER,
+            }),
+          ],
+        }),
+    ),
+  });
+
+  const itemRows = items.map(
+    (item, i) =>
+      new TableRow({
+        children: [
+          new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: item.product_name ?? '—', bold: true })] })] }),
+          new TableCell({ children: [new Paragraph({ text: item.hs_code ?? '—', alignment: AlignmentType.CENTER })] }),
+          new TableCell({ children: [new Paragraph({ text: item.quantity?.toLocaleString() ?? '—', alignment: AlignmentType.RIGHT })] }),
+          new TableCell({
+            children: [
+              new Paragraph({
+                text: item.unit_price != null ? `${item.currency ?? 'USD'} ${item.unit_price.toFixed(2)}` : '—',
+                alignment: AlignmentType.RIGHT,
+              }),
+            ],
+          }),
+          new TableCell({
+            children: [
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text:
+                      item.quantity != null && item.unit_price != null
+                        ? `${item.currency ?? 'USD'} ${(item.quantity * item.unit_price).toFixed(2)}`
+                        : '—',
+                    bold: true,
+                  }),
+                ],
+                alignment: AlignmentType.RIGHT,
+              }),
+            ],
+          }),
+        ],
+      }),
+  );
+
+  const totalRow =
+    items.length > 0
+      ? [
+          new TableRow({
+            children: [
+              ...Array(3)
+                .fill(null)
+                .map(() => new TableCell({ children: [new Paragraph('')] })),
+              new TableCell({
+                children: [
+                  new Paragraph({
+                    children: [new TextRun({ text: 'TOTAL', bold: true, color: '6366F1' })],
+                    alignment: AlignmentType.RIGHT,
+                  }),
+                ],
+              }),
+              new TableCell({
+                children: [
+                  new Paragraph({
+                    children: [new TextRun({ text: `${currency} ${total.toFixed(2)}`, bold: true, color: '6366F1' })],
+                    alignment: AlignmentType.RIGHT,
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ]
+      : [];
+
+  const children: (Paragraph | Table)[] = [
+    new Paragraph({ text: args.seller?.company_name ?? 'FLONIX', heading: HeadingLevel.HEADING_2, alignment: AlignmentType.CENTER }),
+    new Paragraph({ text: 'BUSINESS PROPOSAL', heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER }),
+    new Paragraph({
+      children: [
+        new TextRun({
+          text: `No: ${args.document_number ?? '—'}    Date: ${args.issue_date ?? new Date().toISOString().slice(0, 10)}`,
+          color: '666666',
+          size: 20,
+        }),
+      ],
+      alignment: AlignmentType.RIGHT,
+    }),
+    new Paragraph({ text: '' }),
+
+    // Buyer
+    new Paragraph({ text: 'PREPARED FOR', heading: HeadingLevel.HEADING_3 }),
+    new Paragraph({ children: [new TextRun({ text: args.buyer?.company_name ?? '—', bold: true })] }),
+    ...(args.buyer?.country ? [new Paragraph({ text: args.buyer.country })] : []),
+    ...(args.buyer?.contact_person ? [new Paragraph({ text: args.buyer.contact_person })] : []),
+    ...(args.buyer?.email ? [new Paragraph({ children: [new TextRun({ text: args.buyer.email, color: '6366F1' })] })] : []),
+    new Paragraph({ text: '' }),
+  ];
+
+  // Section 1
+  if (ps?.company_overview) {
+    children.push(
+      new Paragraph({ text: '1. COMPANY OVERVIEW', heading: HeadingLevel.HEADING_3 }),
+      new Paragraph({ text: ps.company_overview }),
+    );
+    if (ps.certifications) {
+      children.push(new Paragraph({ children: [new TextRun({ text: `Certifications: ${ps.certifications}`, italics: true, color: '059669' })] }));
+    }
+    children.push(new Paragraph({ text: '' }));
+  }
+
+  // Section 2
+  children.push(new Paragraph({ text: '2. PRODUCT PORTFOLIO', heading: HeadingLevel.HEADING_3 }));
+  if (ps?.product_highlights) {
+    children.push(new Paragraph({ text: ps.product_highlights }));
+  }
+  if (items.length > 0) {
+    children.push(
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        rows: [headerRow, ...itemRows, ...totalRow],
+      }),
+    );
+  }
+  children.push(new Paragraph({ text: '' }));
+
+  // Section 3
+  if (ps?.why_choose_us) {
+    children.push(
+      new Paragraph({ text: '3. WHY CHOOSE US', heading: HeadingLevel.HEADING_3 }),
+      new Paragraph({ text: ps.why_choose_us }),
+      new Paragraph({ text: '' }),
+    );
+  }
+
+  // Partnership Terms
+  if (ps?.partnership_terms) {
+    children.push(
+      new Paragraph({ text: 'PARTNERSHIP TERMS', heading: HeadingLevel.HEADING_3 }),
+      new Paragraph({ text: ps.partnership_terms }),
+      new Paragraph({ text: '' }),
+    );
+  }
+
+  // Remarks
+  if (args.remarks) {
+    children.push(
+      new Paragraph({ text: 'REMARKS', heading: HeadingLevel.HEADING_3 }),
+      new Paragraph({ text: args.remarks }),
+      new Paragraph({ text: '' }),
+    );
+  }
+
+  // CTA
+  children.push(new Paragraph({ text: '4. CONTACT & NEXT STEPS', heading: HeadingLevel.HEADING_3 }));
+  if (ps?.cta) {
+    children.push(new Paragraph({ children: [new TextRun({ text: ps.cta, color: '4F46E5' })] }));
+  } else {
+    if (args.seller?.contact_person) children.push(new Paragraph({ children: [new TextRun({ text: args.seller.contact_person, bold: true })] }));
+    if (args.seller?.email) children.push(new Paragraph({ children: [new TextRun({ text: args.seller.email, color: '6366F1' })] }));
+    if (args.seller?.phone) children.push(new Paragraph({ text: args.seller.phone }));
+  }
+
+  children.push(
+    new Paragraph({ text: '' }),
+    new Paragraph({
+      children: [
+        new TextRun({
+          text: `Generated by FLONIX AI · Confidential · ${new Date().toLocaleDateString('ko-KR')}`,
+          color: '999999',
+          size: 18,
+        }),
+      ],
+      alignment: AlignmentType.CENTER,
+    }),
+  );
+
+  return new Document({
+    sections: [{
+      properties: {
+        page: {
+          margin: {
+            top: convertMillimetersToTwip(20),
+            bottom: convertMillimetersToTwip(20),
+            left: convertMillimetersToTwip(15),
+            right: convertMillimetersToTwip(15),
+          },
+        },
+      },
+      children,
+    }],
+  });
+}
+
 // ─── 무역 서류 DOCX ─────────────────────────────────────────────────────────
 function buildTradeDocDOCX(args: TradeDocArgs, docType: string): Document {
   const title = DOC_TITLE[docType] ?? docType;
@@ -464,7 +872,16 @@ function buildTradeDocDOCX(args: TradeDocArgs, docType: string): Document {
   return new Document({
     sections: [
       {
-        properties: {},
+        properties: {
+            page: {
+              margin: {
+                top: convertMillimetersToTwip(20),
+                bottom: convertMillimetersToTwip(20),
+                left: convertMillimetersToTwip(15),
+                right: convertMillimetersToTwip(15),
+              },
+            },
+          },
         children: [
           new Paragraph({ text: title, heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER }),
           new Paragraph({
@@ -564,7 +981,16 @@ function buildComplianceDOCX(args: ComplianceArgs): Document {
   return new Document({
     sections: [
       {
-        properties: {},
+        properties: {
+            page: {
+              margin: {
+                top: convertMillimetersToTwip(20),
+                bottom: convertMillimetersToTwip(20),
+                left: convertMillimetersToTwip(15),
+                right: convertMillimetersToTwip(15),
+              },
+            },
+          },
         children: [
           new Paragraph({ text: 'COMPLIANCE CHECK REPORT', heading: HeadingLevel.HEADING_1 }),
           new Paragraph({ text: '' }),
@@ -676,4 +1102,20 @@ export async function downloadComplianceAsWord(
 ): Promise<void> {
   const blob = await Packer.toBlob(buildComplianceDOCX(args as unknown as ComplianceArgs));
   saveAs(blob, `FLONIX_COMPLIANCE_${todayCompact()}.docx`);
+}
+
+/** PROPOSAL → FLONIX_PROPOSAL_[YYYYMMDD].pdf */
+export async function downloadProposalAsPDF(
+  args: Record<string, unknown>,
+): Promise<void> {
+  const blob = await htmlToBlob(buildProposalHTML(args as unknown as ProposalArgs));
+  triggerDownload(blob, `FLONIX_PROPOSAL_${todayCompact()}.pdf`);
+}
+
+/** PROPOSAL → FLONIX_PROPOSAL_[YYYYMMDD].docx */
+export async function downloadProposalAsWord(
+  args: Record<string, unknown>,
+): Promise<void> {
+  const blob = await Packer.toBlob(buildProposalDOCX(args as unknown as ProposalArgs));
+  saveAs(blob, `FLONIX_PROPOSAL_${todayCompact()}.docx`);
 }

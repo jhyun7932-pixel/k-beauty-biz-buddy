@@ -3,6 +3,8 @@
 
 import { create } from "zustand";
 import type { PartialParseResult } from "../utils/partialJsonParser";
+import type { NextAction } from "../lib/nextActions";
+import { detectResponseContext, getNextActions } from "../lib/nextActions";
 
 export type StreamPhase =
   | "idle"
@@ -15,7 +17,7 @@ export type StreamPhase =
   | "complete"
   | "error";
 
-export type DocumentType = "PI" | "CI" | "PL" | "NDA" | "SALES_CONTRACT" | "COMPLIANCE" | null;
+export type DocumentType = "PI" | "CI" | "PL" | "NDA" | "SALES_CONTRACT" | "PROPOSAL" | "COMPLIANCE" | null;
 
 export interface ToolCallInfo {
   name: string;
@@ -31,6 +33,7 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
   toolCall?: { name: string; documentType: DocumentType };
+  nextActions?: NextAction[];
 }
 
 interface StreamingState {
@@ -67,7 +70,7 @@ function fnToDocType(name: string): DocumentType {
 function argsToDocType(args: Record<string, unknown> | null): DocumentType {
   if (!args) return null;
   const dt = args.document_type as string | undefined;
-  if (dt && ["PI", "CI", "PL", "NDA", "SALES_CONTRACT"].includes(dt)) return dt as DocumentType;
+  if (dt && ["PI", "CI", "PL", "NDA", "SALES_CONTRACT", "PROPOSAL"].includes(dt)) return dt as DocumentType;
   return null;
 }
 
@@ -162,6 +165,15 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
     const s = get();
     const newMsgs = [...s.messages];
 
+    // NextAction 컨텍스트 감지
+    const context = detectResponseContext(
+      s.toolCall?.name,
+      s.rightPanelDocType,
+      s.toolCall?.completedArgs,
+      s.currentPhase2Text,
+    );
+    const actions = getNextActions(context);
+
     if (s.currentStreamingText.trim()) {
       newMsgs.push({
         id: `msg-${Date.now()}-t`,
@@ -180,7 +192,14 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
         toolCall: s.toolCall
           ? { name: s.toolCall.name, documentType: s.rightPanelDocType }
           : undefined,
+        nextActions: actions.length > 0 ? actions : undefined,
       });
+    } else if (actions.length > 0 && newMsgs.length > 0) {
+      // Phase2 텍스트가 없지만 actions가 있으면 마지막 메시지에 첨부
+      const lastMsg = newMsgs[newMsgs.length - 1];
+      if (lastMsg.role === "assistant") {
+        lastMsg.nextActions = actions;
+      }
     }
 
     set({
