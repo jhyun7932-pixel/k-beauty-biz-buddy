@@ -19,6 +19,15 @@ function selectModel(message: string): { url: string; model: string } {
   return { url: GEMINI_URL_FAST, model: GEMINI_MODEL_FAST };
 }
 
+/** 문서번호 자동 생성: TYPE-YYYYMMDD-NNN */
+function generateDocumentNumber(docType: string): string {
+  const prefix = docType === "PROPOSAL" ? "PROP" : docType;
+  const now = new Date();
+  const ymd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  const seq = String(Math.floor(Math.random() * 900) + 100); // 100-999
+  return `${prefix}-${ymd}-${seq}`;
+}
+
 /** get_user_context 인메모리 캐시 (5분 TTL) */
 const contextCache = new Map<string, { data: Record<string, unknown>; ts: number }>();
 const CACHE_TTL = 5 * 60 * 1000;
@@ -71,8 +80,9 @@ const SYSTEM_PROMPT = `당신은 FLONIX의 AI 무역 어시스턴트입니다. K
 [판매자(Seller) 정보 규칙 - 필수 준수]
 - 무역 서류 생성 시 seller 정보는 반드시 get_user_context로 조회한 실제 데이터만 사용할 것
 - get_user_context 결과의 seller 필드에 아래 정보가 포함됨:
-  company_name(영문사명), company_name_kr(한글사명), representative(대표자), contact_person(담당자),
-  contact_email, contact_phone, address, website, logo_url,
+  company_name(영문사명), company_name_ko(한글사명), representative(대표자),
+  contact_name(담당자명), contact_title(직급), contact_email, contact_phone,
+  address, website, logo_url, seal_url(직인), signature_url(서명),
   bank_name, bank_account, bank_swift, default_moq, default_lead_time,
   default_incoterms, default_payment_terms, certifications[], export_countries[], email_signature
 - 절대로 seller 정보를 임의로 생성하거나 추측하지 말 것
@@ -138,7 +148,60 @@ document_type="PROPOSAL"로 generate_trade_document 호출 시:
   5. partnership_terms: MOQ, 리드타임, 결제조건 (seller.default_moq, seller.default_lead_time 활용)
   6. cta: "샘플 요청", "화상미팅 스케줄" 등 구체적 CTA + seller.contact_email/phone 포함
 - items 배열에 제품 포트폴리오 (제품명, 카테고리, 용량, 단가) 포함
-- buyer가 특정되면 해당 국가 규제 준수 현황도 언급`;
+- buyer가 특정되면 해당 국가 규제 준수 현황도 언급
+
+[문서번호 생성 규칙]
+- PI: "PI-YYYYMMDD-NNN" (예: PI-20260225-001)
+- CI: "CI-YYYYMMDD-NNN"
+- PL: "PL-YYYYMMDD-NNN"
+- NDA: "NDA-YYYYMMDD-NNN"
+- SC: "SC-YYYYMMDD-NNN"
+- PROPOSAL: "PROP-YYYYMMDD-NNN"
+- 날짜는 issue_date 기준, NNN은 001부터 순번
+
+[PI (Proforma Invoice) 필수 항목 - 국제 무역 표준]
+generate_trade_document(document_type="PI") 시 아래 필드 반드시 포함:
+1. Document Header: PI 번호, 발행일, 유효기간(Validity)
+2. Seller: company_name, address, contact_name, contact_email, contact_phone, 사업자등록번호(가능 시)
+3. Buyer: company_name, address, contact_person, email
+4. Items Table: No., Description(영문 제품명), HS Code, Qty, Unit, Unit Price, Amount
+5. Summary: Subtotal, Shipping/Freight, Insurance(해당 시), Grand Total (통화 명시)
+6. Trade Terms: Incoterms (FOB/CIF/EXW + 출발항), Payment Terms, Lead Time, MOQ
+7. Banking Info: Bank Name, Account No., SWIFT Code (seller.bank_name/bank_account/bank_swift)
+8. Remarks: "This PI is not a tax invoice", 유효기간 안내
+9. Signature Block: seller.company_name, seller.representative, 서명란, 직인란, 날짜
+
+[CI (Commercial Invoice) 필수 항목 - 통관용]
+generate_trade_document(document_type="CI") 시 아래 필드 반드시 포함:
+1. Document Header: Invoice No., Invoice Date
+2. Seller(Shipper/Exporter): company_name, address, 사업자등록번호
+3. Buyer(Consignee): company_name, address, 수입자등록번호(해당 시)
+4. Notify Party: (Buyer와 다를 경우 명시)
+5. Transport: Port of Loading, Port of Discharge, Vessel/Flight, B/L No.
+6. Items Table: No., Description, HS Code, Country of Origin("Republic of Korea"), Qty, Unit Price, Amount
+7. Total: 통화 + 숫자 + 영문 금액(in words)
+8. Incoterms + Payment Terms
+9. Declaration: "We certify that this invoice is true and correct"
+10. Signature Block
+
+[PL (Packing List) 필수 항목 - 물류/통관용]
+generate_trade_document(document_type="PL") 시 아래 필드 반드시 포함:
+1. Document Header: PL No., Date, 관련 Invoice No.
+2. Seller/Buyer 정보
+3. Shipping Info: Port of Loading, Destination, Vessel
+4. Items Table: No., Description, Qty, Carton No., Cartons, N.W.(kg), G.W.(kg), Dimensions(cm)
+5. Summary: Total Cartons, Total N.W., Total G.W., Total CBM(입방미터)
+6. Marks & Numbers: Shipping Mark (수입자 요건 반영)
+7. Country of Origin: "Republic of Korea"
+
+[이메일 생성 규칙]
+이메일 작성 시:
+1. Subject Line: 명확하고 구체적 (예: "Proforma Invoice PI-20260225-001 | K-Beauty Co.")
+2. Opening: 수신자 직함+이름 (Dear Mr./Ms. + contact_person)
+3. Body: 목적, 핵심 내용, 다음 단계(Next Step) 구체적 제시
+4. Closing: 정중한 마무리 (We look forward to... / Please do not hesitate to...)
+5. Signature: seller.email_signature가 있으면 그대로 삽입. 없으면 seller.contact_name, contact_title, company_name, phone, email로 자동 구성
+6. 톤: 비즈니스 포멀 (축약형 사용 금지, 이모지 금지)`;
 
 const SYSTEM_PROMPT_FAST = `당신은 FLONIX AI 무역 어시스턴트입니다. K-뷰티 수출 전문가로서 간결하고 실무적으로 답변하세요.
 - 한국어 우선, 구조화된 답변
@@ -169,8 +232,11 @@ const TOOLS = [{
         seller: {
           type: "object",
           properties: {
-            company_name: { type: "string" }, address: { type: "string" },
-            contact_person: { type: "string" }, email: { type: "string" }, phone: { type: "string" },
+            company_name: { type: "string" }, company_name_ko: { type: "string" },
+            representative: { type: "string" }, address: { type: "string" },
+            contact_name: { type: "string" }, contact_title: { type: "string" },
+            email: { type: "string" }, phone: { type: "string" },
+            bank_name: { type: "string" }, bank_account: { type: "string" }, bank_swift: { type: "string" },
           }
         },
         buyer: {
@@ -399,19 +465,22 @@ async function fetchUserContext(sb: ReturnType<typeof createClient>, userId: str
 
   const cd = companyRes.data;
   const pf = profileRes.data;
-  const companyInfo = (pf?.company_info && typeof pf.company_info === "object") ? pf.company_info as Record<string, unknown> : {};
+  const ci = (pf?.company_info && typeof pf.company_info === "object") ? pf.company_info as Record<string, unknown> : {};
 
-  // companies 우선, 없으면 profiles.company_info fallback
+  // companies 새 컬럼 우선 → 기존 컬럼 → profiles.company_info fallback
   const seller = {
-    company_name: cd?.name || companyInfo.company_name as string || null,
-    company_name_kr: cd?.company_name_kr || companyInfo.company_name_kr as string || null,
-    representative: companyInfo.ceo_name as string || pf?.display_name || null,
-    contact_person: companyInfo.contact_name as string || pf?.display_name || null,
-    contact_email: cd?.contact_email || companyInfo.contact_email as string || null,
-    contact_phone: cd?.contact_phone || companyInfo.contact_phone as string || null,
-    address: cd?.address || companyInfo.address as string || null,
-    website: cd?.website || companyInfo.website as string || null,
+    company_name: cd?.company_name || cd?.name || ci.company_name as string || null,
+    company_name_ko: cd?.company_name_ko || cd?.company_name_kr || ci.company_name_ko as string || null,
+    representative: cd?.representative || ci.ceo_name as string || pf?.display_name || null,
+    contact_name: cd?.contact_name || ci.contact_name as string || pf?.display_name || null,
+    contact_title: cd?.contact_title || ci.contact_title as string || null,
+    contact_email: cd?.contact_email || ci.contact_email as string || null,
+    contact_phone: cd?.contact_phone || ci.contact_phone as string || null,
+    address: cd?.address || ci.address as string || null,
+    website: cd?.website || ci.website as string || null,
     logo_url: cd?.logo_url || null,
+    seal_url: cd?.seal_url || null,
+    signature_url: cd?.signature_url || null,
     bank_name: cd?.bank_name || null,
     bank_account: cd?.bank_account || null,
     bank_swift: cd?.bank_swift || null,
@@ -419,11 +488,9 @@ async function fetchUserContext(sb: ReturnType<typeof createClient>, userId: str
     default_lead_time: cd?.default_lead_time || 20,
     default_incoterms: cd?.default_incoterms || "FOB",
     default_payment_terms: cd?.default_payment_terms || "T/T 30/70",
-    main_category: cd?.main_category || null,
-    manufacturing_type: cd?.manufacturing_type || null,
     certifications: cd?.certifications || [],
-    export_countries: companyInfo.export_countries as string[] || [],
-    email_signature: companyInfo.email_signature as string || null,
+    export_countries: cd?.export_countries || ci.export_countries as string[] || [],
+    email_signature: cd?.email_signature || ci.email_signature as string || null,
   };
 
   const buyers = (buyersRes.data || []).map((b: Record<string, unknown>) => ({
@@ -450,7 +517,7 @@ async function fetchUserContext(sb: ReturnType<typeof createClient>, userId: str
   }));
 
   const sellerName = seller.company_name || "회사명 미등록";
-  const contactName = seller.contact_person || "담당자 미등록";
+  const contactName = seller.contact_name || "담당자 미등록";
 
   return {
     seller,
@@ -663,10 +730,16 @@ Deno.serve(async (req) => {
 
           // Phase 2: Function Call 후 확인 메시지 (generate_trade_document / check_compliance)
           if (hasFn && fnName !== "get_user_context") {
-            push({ type: "phase2_start", data: { functionName: fnName } });
-
             let parsedArgs: Record<string, unknown> = {};
             try { parsedArgs = JSON.parse(fnArgs); } catch { /* ignore */ }
+
+            // 문서번호 자동 보완 (AI가 누락 시)
+            if (fnName === "generate_trade_document" && !parsedArgs.document_number) {
+              const dt = (parsedArgs.document_type as string) || "PI";
+              parsedArgs.document_number = generateDocumentNumber(dt);
+            }
+
+            push({ type: "phase2_start", data: { functionName: fnName } });
 
             const p2Msgs = [
               ...currentMessages,

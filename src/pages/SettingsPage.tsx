@@ -47,61 +47,55 @@ export default function SettingsPage() {
     }
     setSaving(true);
     try {
-      // 1) companies 테이블: 기존 row 있으면 UPDATE, 없으면 INSERT
-      const companyData = {
-        name: companySettings.companyName || '',
-        company_name_kr: companySettings.companyNameKr || null,
+      // companies 테이블 upsert (새 컬럼명 기준)
+      const row = {
+        user_id: user.id,
+        // 새 정규화 컬럼
+        company_name: companySettings.companyName || null,
+        company_name_ko: companySettings.companyNameKr || null,
+        representative: companySettings.ceoName || null,
+        contact_name: companySettings.contactName || null,
+        contact_title: companySettings.contactTitle || null,
         contact_email: companySettings.contactEmail || null,
         contact_phone: companySettings.contactPhone || null,
         address: companySettings.address || null,
         website: companySettings.website || null,
         logo_url: companySettings.logoUrl || null,
+        seal_url: companySettings.stampImageUrl || null,
+        signature_url: companySettings.signatureImageUrl || null,
+        email_signature: companySettings.emailSignature || null,
+        export_countries: companySettings.exportCountries || [],
         default_moq: companySettings.defaultMoq || 500,
         default_lead_time: companySettings.defaultLeadTime || 14,
+        // 기존 컬럼도 동기화 (하위 호환)
+        name: companySettings.companyName || '',
+        company_name_kr: companySettings.companyNameKr || null,
         updated_at: new Date().toISOString(),
       };
 
-      // 기존 company row 존재 여부 확인
-      const { data: existing } = await supabase
+      const { error: upsertErr } = await supabase
         .from('companies')
-        .select('id')
-        .eq('user_id', user.id)
-        .maybeSingle();
+        .upsert(row, { onConflict: 'user_id' });
+      if (upsertErr) throw upsertErr;
 
-      if (existing) {
-        // UPDATE
-        const { error: updateErr } = await supabase
-          .from('companies')
-          .update(companyData)
-          .eq('user_id', user.id);
-        if (updateErr) throw updateErr;
-      } else {
-        // INSERT
-        const { error: insertErr } = await supabase
-          .from('companies')
-          .insert({ ...companyData, user_id: user.id });
-        if (insertErr) throw insertErr;
-      }
-
-      // 2) profiles.company_info에도 백업 저장 (AI fallback용)
-      const companyInfoJson = {
-        company_name: companySettings.companyName,
-        company_name_kr: companySettings.companyNameKr,
-        ceo_name: companySettings.ceoName,
-        contact_name: companySettings.contactName,
-        contact_title: companySettings.contactTitle,
-        contact_email: companySettings.contactEmail,
-        contact_phone: companySettings.contactPhone,
-        address: companySettings.address,
-        website: companySettings.website,
-        export_countries: companySettings.exportCountries,
-        brand_tone: companySettings.brandTone,
-        email_signature: companySettings.emailSignature,
-      };
-
+      // profiles.company_info 백업 (AI fallback)
       await supabase
         .from('profiles')
-        .update({ company_info: companyInfoJson })
+        .update({
+          company_info: {
+            company_name: companySettings.companyName,
+            company_name_ko: companySettings.companyNameKr,
+            ceo_name: companySettings.ceoName,
+            contact_name: companySettings.contactName,
+            contact_title: companySettings.contactTitle,
+            contact_email: companySettings.contactEmail,
+            contact_phone: companySettings.contactPhone,
+            address: companySettings.address,
+            website: companySettings.website,
+            export_countries: companySettings.exportCountries,
+            email_signature: companySettings.emailSignature,
+          },
+        })
         .eq('user_id', user.id);
 
       toast.success('설정이 저장되었습니다. AI 에이전트가 이 정보를 사용합니다.');
@@ -113,30 +107,36 @@ export default function SettingsPage() {
     }
   };
 
-  // 페이지 마운트 시 DB에서 기존 회사정보 로드
+  // 페이지 마운트 시 DB에서 기존 회사정보 로드 → store에 반영
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const { data } = await supabase
+      const { data: cd } = await supabase
         .from('companies')
         .select('*')
         .eq('user_id', user.id)
         .maybeSingle();
-      if (data) {
-        // DB 데이터를 store에 반영 (store에 값이 비어있을 때만)
-        const updates: Record<string, unknown> = {};
-        if (!companySettings.companyName && data.name) updates.companyName = data.name;
-        if (!companySettings.companyNameKr && data.company_name_kr) updates.companyNameKr = data.company_name_kr;
-        if (!companySettings.contactEmail && data.contact_email) updates.contactEmail = data.contact_email;
-        if (!companySettings.contactPhone && data.contact_phone) updates.contactPhone = data.contact_phone;
-        if (!companySettings.address && data.address) updates.address = data.address;
-        if (!companySettings.website && data.website) updates.website = data.website;
-        if (!companySettings.logoUrl && data.logo_url) updates.logoUrl = data.logo_url;
-        if (data.default_moq) updates.defaultMoq = data.default_moq;
-        if (data.default_lead_time) updates.defaultLeadTime = data.default_lead_time;
-        if (Object.keys(updates).length > 0) {
-          setCompanySettings(updates as any);
-        }
+      if (!cd) return;
+      // DB → store 매핑 (DB 값이 있으면 덮어쓰기)
+      const updates: Partial<typeof companySettings> = {};
+      if (cd.company_name || cd.name) updates.companyName = cd.company_name || cd.name;
+      if (cd.company_name_ko || cd.company_name_kr) updates.companyNameKr = cd.company_name_ko || cd.company_name_kr;
+      if (cd.representative) updates.ceoName = cd.representative;
+      if (cd.contact_name) updates.contactName = cd.contact_name;
+      if (cd.contact_title) updates.contactTitle = cd.contact_title;
+      if (cd.contact_email) updates.contactEmail = cd.contact_email;
+      if (cd.contact_phone) updates.contactPhone = cd.contact_phone;
+      if (cd.address) updates.address = cd.address;
+      if (cd.website) updates.website = cd.website;
+      if (cd.logo_url) updates.logoUrl = cd.logo_url;
+      if (cd.seal_url) updates.stampImageUrl = cd.seal_url;
+      if (cd.signature_url) updates.signatureImageUrl = cd.signature_url;
+      if (cd.email_signature) updates.emailSignature = cd.email_signature;
+      if (cd.export_countries?.length) updates.exportCountries = cd.export_countries;
+      if (cd.default_moq) updates.defaultMoq = cd.default_moq;
+      if (cd.default_lead_time) updates.defaultLeadTime = cd.default_lead_time;
+      if (Object.keys(updates).length > 0) {
+        setCompanySettings(updates as any);
       }
     })();
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
