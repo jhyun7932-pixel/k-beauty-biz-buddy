@@ -1,4 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.27.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -7,9 +7,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
   "Access-Control-Max-Age": "86400",
 };
-
-const GEMINI_MODEL = "gemini-2.5-pro";
-const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const VALID_EMAIL_TYPES = ['first_proposal', 'sample_followup', 'closing'] as const;
 type EmailType = typeof VALID_EMAIL_TYPES[number];
@@ -133,7 +130,7 @@ function sanitizeStr(val: unknown, maxLen: number): string | undefined {
   return val.slice(0, maxLen);
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
@@ -227,9 +224,9 @@ serve(async (req) => {
       } : undefined,
     };
 
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
-    if (!GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY is not configured");
+    const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!anthropicKey) {
+      throw new Error("ANTHROPIC_API_KEY is not configured");
     }
 
     // Log rate limit usage
@@ -280,39 +277,18 @@ Subject: [제목]
 Best regards,
 [서명]`;
 
-    // ── Gemini API 다이렉트 호출 ──────────────────────────────────────────────
-    const response = await fetch(
-      `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { role: "system", parts: [{ text: systemPrompt }] },
-          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-          generationConfig: { maxOutputTokens: 2048 },
-        }),
-      }
-    );
+    // ── Claude API 호출 ──────────────────────────────────────────────
+    const anthropic = new Anthropic({ apiKey: anthropicKey });
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 2048,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }],
+    });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      let parsedError: any = {};
-      try { parsedError = JSON.parse(errorText); } catch { /* raw */ }
-      console.error(`[generate-email] Gemini 오류 ${response.status}:`, parsedError?.error?.message ?? errorText);
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "요청이 너무 많습니다. 잠시 후 다시 시도해주세요." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      return new Response(
-        JSON.stringify({ error: parsedError?.error?.message ?? "AI 서비스 오류가 발생했습니다." }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    console.log(`[generate-email] tokens - input: ${response.usage.input_tokens}, output: ${response.usage.output_tokens}`);
 
-    const data = await response.json();
-    const emailContent = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const emailContent = response.content[0].type === 'text' ? response.content[0].text : '';
 
     // Parse subject and body
     const subjectMatch = emailContent.match(/Subject:\s*(.+?)(?:\n|$)/i);
@@ -320,8 +296,8 @@ Best regards,
     const body = emailContent.replace(/Subject:\s*.+?(?:\n|$)/i, '').trim();
 
     return new Response(
-      JSON.stringify({ 
-        success: true, 
+      JSON.stringify({
+        success: true,
         email: {
           subject,
           body,

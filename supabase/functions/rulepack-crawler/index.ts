@@ -1,3 +1,4 @@
+import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.27.0";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = {
@@ -6,9 +7,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
   'Access-Control-Max-Age': '86400',
 };
-
-const GEMINI_MODEL = 'gemini-2.5-pro';
-const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 interface PendingUpdate {
   country: string;
@@ -24,8 +22,10 @@ interface PendingUpdate {
 
 // ── AI-powered regulatory crawler ────────────────────────────────────────────
 async function crawlRegulatoryUpdates(): Promise<PendingUpdate[]> {
-  const apiKey = Deno.env.get('GEMINI_API_KEY');
-  if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
+  const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
+
+  const anthropic = new Anthropic({ apiKey });
 
   const prompt = `You are an expert regulatory compliance analyst specializing in global cosmetics regulations.
 Generate 3 to 5 REALISTIC and PLAUSIBLE regulatory changes that could occur in 2026 for cosmetics/beauty products.
@@ -44,28 +44,14 @@ For each update, provide a JSON object with these exact fields:
 
 Return ONLY a valid JSON array. No markdown, no explanation.`;
 
-  // ── Gemini API 다이렉트 호출 ──────────────────────────────────────────────
-  const response = await fetch(
-    `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 3000 },
-      }),
-    }
-  );
+  const response = await anthropic.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 4096,
+    messages: [{ role: "user", content: prompt }],
+  });
 
-  if (!response.ok) {
-    const errText = await response.text();
-    let parsedError: any = {};
-    try { parsedError = JSON.parse(errText); } catch { /* raw */ }
-    throw new Error(`Gemini API error ${response.status}: ${parsedError?.error?.message ?? errText}`);
-  }
-
-  const data = await response.json();
-  const content = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+  const content = response.content[0].type === 'text' ? response.content[0].text : '';
+  console.log(`[rulepack-crawler] tokens - input: ${response.usage.input_tokens}, output: ${response.usage.output_tokens}`);
 
   // Strip markdown code fences if present
   const jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();

@@ -1,4 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.27.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -7,9 +7,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
   "Access-Control-Max-Age": "86400",
 };
-
-const GEMINI_MODEL = "gemini-2.5-pro";
-const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const SYSTEM_PROMPT = `You are a cosmetic ingredient extraction expert. Extract ALL ingredients from the label image or text.
 
@@ -34,7 +31,7 @@ const SYSTEM_PROMPT = `You are a cosmetic ingredient extraction expert. Extract 
 
 ## CONFIDENCE RULES
 - high: Common ingredients (Water, Glycerin, etc.) or clearly readable
-- medium: Slightly unclear but identifiable  
+- medium: Slightly unclear but identifiable
 - low: OCR artifacts, needs human review
 
 ## KOREAN NAME EXAMPLES
@@ -80,7 +77,12 @@ async function logRateLimitUsage(supabase: any, userId: string, functionName: st
   }
 }
 
-serve(async (req) => {
+function cleanBase64(data: string): string {
+  const idx = data.indexOf(",");
+  return idx !== -1 ? data.substring(idx + 1) : data;
+}
+
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
@@ -144,27 +146,36 @@ serve(async (req) => {
       );
     }
 
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
-    if (!GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY is not configured");
+    const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!anthropicKey) {
+      throw new Error("ANTHROPIC_API_KEY is not configured");
     }
 
     await logRateLimitUsage(supabaseClient, userId, "ocr-extract");
 
-    // ── Gemini API 다이렉트 호출 (inlineData로 이미지 전달) ──────────────────
-    const OCR_TEXT = "Extract ALL ingredients from this cosmetic label. Return each ingredient with English INCI name and Korean name. Be thorough and accurate.";
+    const anthropic = new Anthropic({ apiKey: anthropicKey });
 
-    // Gemini parts 빌드 (rawText/base64/URL 케이스별 처리)
-    let userParts: any[];
+    // Claude 메시지 content 빌드
+    const OCR_TEXT = "Extract ALL ingredients from this cosmetic label. Return each ingredient with English INCI name and Korean name. Be thorough and accurate. Return ONLY valid JSON.";
+    const userContent: Anthropic.ContentBlockParam[] = [];
+
     if (rawText) {
-      userParts = [{ text: `Extract all cosmetic ingredients from this text. Return Korean names too.\n\n${rawText.slice(0, 50000)}` }];
+      userContent.push({
+        type: "text",
+        text: `Extract all cosmetic ingredients from this text. Return Korean names too. Return ONLY valid JSON.\n\n${rawText.slice(0, 50000)}`,
+      });
     } else if (imageBase64) {
-      userParts = [
-        { text: OCR_TEXT },
-        { inlineData: { mimeType: "image/jpeg", data: imageBase64 } },
-      ];
+      userContent.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/jpeg",
+          data: cleanBase64(imageBase64),
+        },
+      } as any);
+      userContent.push({ type: "text", text: OCR_TEXT });
     } else {
-      // imageUrl → fetch하여 base64로 변환 후 inlineData로 전달
+      // imageUrl → fetch하여 base64로 변환
       const imgRes = await fetch(imageUrl);
       if (!imgRes.ok) throw new Error(`이미지 URL 로딩 실패: ${imgRes.status}`);
       const imgBuf = await imgRes.arrayBuffer();
@@ -173,56 +184,41 @@ serve(async (req) => {
       for (let i = 0; i < imgUint8.length; i++) imgBinary += String.fromCharCode(imgUint8[i]);
       const imgBase64 = btoa(imgBinary);
       const contentType = imgRes.headers.get("content-type") || "image/jpeg";
-      userParts = [
-        { text: OCR_TEXT },
-        { inlineData: { mimeType: contentType, data: imgBase64 } },
-      ];
+      const validTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+      const mimeType = validTypes.includes(contentType) ? contentType : "image/jpeg";
+
+      userContent.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: mimeType,
+          data: imgBase64,
+        },
+      } as any);
+      userContent.push({ type: "text", text: OCR_TEXT });
     }
 
-    const response = await fetch(
-      `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { role: "system", parts: [{ text: SYSTEM_PROMPT }] },
-          contents: [{ role: "user", parts: userParts }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.1,
-            maxOutputTokens: 4000,
-          },
-        }),
-      }
-    );
+    // ── Claude API 호출 (Vision) ──────────────────────────────────────
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-5",
+      max_tokens: 4096,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userContent }],
+    });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      let parsedError: any = {};
-      try { parsedError = JSON.parse(errorText); } catch { /* raw */ }
-      console.error(`[ocr-extract] Gemini 오류 ${response.status}:`, parsedError?.error?.message ?? errorText);
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "요청이 너무 많습니다. 잠시 후 다시 시도해주세요." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      return new Response(
-        JSON.stringify({ error: parsedError?.error?.message ?? "AI 서비스 오류가 발생했습니다." }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    console.log(`[ocr-extract] tokens - input: ${response.usage.input_tokens}, output: ${response.usage.output_tokens}`);
 
-    const aiResponse = await response.json();
-    const content = aiResponse.candidates?.[0]?.content?.parts?.[0]?.text;
-    
+    const content = response.content[0].type === 'text' ? response.content[0].text : '';
+
     if (!content) {
       throw new Error("AI 응답이 비어있습니다");
     }
 
     let parsed;
     try {
-      parsed = JSON.parse(content);
+      // Strip markdown code fences if present
+      const cleanContent = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      parsed = JSON.parse(cleanContent);
     } catch {
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {

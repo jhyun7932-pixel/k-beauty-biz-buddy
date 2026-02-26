@@ -1,5 +1,5 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.27.0";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,9 +8,6 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
   "Access-Control-Max-Age": "86400",
 };
-
-const GEMINI_MODEL = "gemini-2.5-pro";
-const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 const EXTRACT_PROMPT = `You are a document analysis expert for K-beauty export trade documents.
 Extract ALL text content from this document and organize it into structured sections.
@@ -76,7 +73,7 @@ async function logRateLimitUsage(supabase: any, userId: string, functionName: st
   }
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
@@ -166,9 +163,9 @@ serve(async (req) => {
       );
     }
 
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
-    if (!GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY is not configured");
+    const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!anthropicKey) {
+      throw new Error("ANTHROPIC_API_KEY is not configured");
     }
 
     // Log rate limit usage
@@ -186,50 +183,52 @@ serve(async (req) => {
     const isPdf = filePath.toLowerCase().endsWith(".pdf");
     const mimeType = isPdf ? "application/pdf" : "image/jpeg";
 
-    // ── Gemini API 다이렉트 호출 (inlineData로 파일 전달) ────────────────────
     const extractText = isPdf
-      ? "이 PDF 문서에서 모든 텍스트를 추출하고 구조화해주세요."
-      : "이 이미지에서 모든 텍스트를 추출하고 구조화해주세요.";
+      ? "이 PDF 문서에서 모든 텍스트를 추출하고 구조화해주세요. Return ONLY valid JSON."
+      : "이 이미지에서 모든 텍스트를 추출하고 구조화해주세요. Return ONLY valid JSON.";
 
-    const aiResponse = await fetch(
-      `${GEMINI_API_BASE}/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { role: "system", parts: [{ text: EXTRACT_PROMPT }] },
-          contents: [{
-            role: "user",
-            parts: [
-              { text: extractText },
-              { inlineData: { mimeType, data: base64 } },
-            ],
-          }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            maxOutputTokens: 4096,
-          },
-        }),
-      }
-    );
+    // ── Claude API 호출 (Vision / PDF) ──────────────────────────────────
+    const anthropic = new Anthropic({ apiKey: anthropicKey });
+    const userContent: Anthropic.ContentBlockParam[] = [];
 
-    if (!aiResponse.ok) {
-      const errText = await aiResponse.text();
-      let parsedError: any = {};
-      try { parsedError = JSON.parse(errText); } catch { /* raw */ }
-      console.error(`[extract-document] Gemini 오류 ${aiResponse.status}:`, parsedError?.error?.message ?? errText);
-      return new Response(
-        JSON.stringify({ error: "AI 텍스트 추출 실패" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (isPdf) {
+      userContent.push({
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: base64,
+        },
+      } as any);
+    } else {
+      const validTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+      const safeMime = validTypes.includes(mimeType) ? mimeType : "image/jpeg";
+      userContent.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: safeMime,
+          data: base64,
+        },
+      } as any);
     }
+    userContent.push({ type: "text", text: extractText });
 
-    const aiResult = await aiResponse.json();
-    const content = aiResult.candidates?.[0]?.content?.parts?.[0]?.text;
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-5",
+      max_tokens: 4096,
+      system: EXTRACT_PROMPT,
+      messages: [{ role: "user", content: userContent }],
+    });
+
+    console.log(`[extract-document] tokens - input: ${response.usage.input_tokens}, output: ${response.usage.output_tokens}`);
+
+    const content = response.content[0].type === 'text' ? response.content[0].text : '';
 
     let parsed: any;
     try {
-      parsed = JSON.parse(content);
+      const cleanContent = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      parsed = JSON.parse(cleanContent);
     } catch {
       const jsonMatch = content?.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
