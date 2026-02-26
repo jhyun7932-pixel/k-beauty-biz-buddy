@@ -1,4 +1,4 @@
-import Anthropic from "npm:@anthropic-ai/sdk@0.27.0";
+import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.27.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -272,20 +272,25 @@ Deno.serve(async (req: Request) => {
       }
     );
   } catch (err: any) {
-    console.error("[FLONIX ERROR]", err);
+    console.error("[FLONIX ERROR]", err?.message || err, err?.stack || "");
     const msg = (err?.message || "").toLowerCase();
     let userMsg = "AI 서비스 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
+    let debugMsg = err?.message || String(err);
 
-    if (msg.includes("overload") || msg.includes("529")) {
+    if (msg.includes("credit balance") || msg.includes("billing") || msg.includes("purchase credits")) {
+      userMsg = "AI API 크레딧이 부족합니다. 관리자에게 Anthropic 결제 설정을 요청해주세요.";
+    } else if (msg.includes("overload") || msg.includes("529")) {
       userMsg = "AI 서비스가 일시적으로 혼잡합니다. 잠시 후 다시 시도해주세요.";
-    } else if (msg.includes("invalid api key") || msg.includes("401")) {
+    } else if (msg.includes("invalid api key") || msg.includes("401") || msg.includes("authentication")) {
       userMsg = "API 키 설정 오류입니다. 관리자에게 문의해주세요.";
     } else if (msg.includes("base64") || msg.includes("image")) {
       userMsg = "파일 처리 오류입니다. 이미지를 JPG로 저장 후 다시 업로드해주세요.";
+    } else if (msg.includes("module") || msg.includes("import") || msg.includes("not found")) {
+      userMsg = "서버 모듈 로딩 오류입니다. 관리자에게 문의해주세요.";
     }
 
     return new Response(
-      JSON.stringify({ error: true, message: userMsg }),
+      JSON.stringify({ error: true, message: userMsg, debug: debugMsg }),
       {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
