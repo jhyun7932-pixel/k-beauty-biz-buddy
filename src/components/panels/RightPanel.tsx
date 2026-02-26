@@ -3,8 +3,16 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
-import { useStreamingStore } from "../../stores/streamingStore";
-import type { DocumentType, ToolCallInfo } from "../../stores/streamingStore";
+import { useTradeStore } from "../../stores/tradeStore";
+import type { TradeDocument, ComplianceResult as TradeComplianceResult } from "../../stores/tradeStore";
+
+type DocumentType = TradeDocument["document_type"] | "COMPLIANCE" | null;
+
+interface ToolCallInfo {
+  name: string;
+  isComplete: boolean;
+  completedArgs: Record<string, unknown> | null;
+}
 import {
   downloadTradeDocAsPDF,
   downloadComplianceAsPDF,
@@ -202,14 +210,40 @@ const COUNTRIES: Record<string, string> = {
   AE: "🇦🇪 UAE (ECAS)",
 };
 
+function deriveDocType(toolName: string | null, doc: TradeDocument | null): DocumentType {
+  if (!toolName) {
+    if (doc) return doc.document_type;
+    return null;
+  }
+  if (toolName === "check_compliance") return "COMPLIANCE";
+  if (doc) return doc.document_type;
+  return "PI";
+}
+
 export default function RightPanel() {
-  const {
-    rightPanelOpen,
-    rightPanelDocType,
-    toolCall,
-    phase,
-    closeRightPanel,
-  } = useStreamingStore();
+  const store = useTradeStore();
+
+  const rightPanelOpen = store.rightPanelOpen;
+  const streamPhase = store.streamPhase;
+  const rightPanelDocType = deriveDocType(store.activeToolName, store.currentDocument);
+  const closeRightPanel = () => useTradeStore.setState({ rightPanelOpen: false });
+
+  const isPhaseComplete = streamPhase === "tool_call_complete" || streamPhase === "complete";
+
+  const toolCall: ToolCallInfo | null =
+    store.currentDocument || store.complianceResult || store.activeToolName
+      ? {
+          name: store.activeToolName || (store.complianceResult ? "check_compliance" : "generate_trade_document"),
+          isComplete: isPhaseComplete,
+          completedArgs: store.currentDocument
+            ? (store.currentDocument as unknown as Record<string, unknown>)
+            : store.complianceResult
+            ? (store.complianceResult as unknown as Record<string, unknown>)
+            : null,
+        }
+      : null;
+
+  const phase = streamPhase;
 
   const [pdfLoading, setPdfLoading] = useState(false);
   const [docxLoading, setDocxLoading] = useState(false);

@@ -11,13 +11,13 @@ import RightPanel from "../components/panels/RightPanel";
 export default function HomePage() {
   const {
     sendMessage,
-    cancelStreaming,
+    cancelStream,
     isStreaming,
-    phase,
+    streamPhase,
     messages,
-    currentStreamingText,
+    streamingText,
     rightPanelOpen,
-    error,
+    errorMessage,
   } = useStreamingChat();
 
   // useBuyers auto-fetches on mount if authenticated
@@ -33,12 +33,12 @@ export default function HomePage() {
     <div className="flex h-screen bg-gray-50 overflow-hidden">
       <ChatPanel
         messages={messages}
-        currentStreamingText={currentStreamingText}
+        currentStreamingText={streamingText}
         isStreaming={isStreaming}
-        phase={phase}
-        error={error}
+        phase={streamPhase}
+        error={errorMessage}
         onSendMessage={sendMessage}
-        onCancel={cancelStreaming}
+        onCancel={cancelStream}
         buyers={buyers}
         productEntries={productEntries}
       />
