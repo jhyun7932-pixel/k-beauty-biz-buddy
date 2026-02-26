@@ -69,7 +69,6 @@ export default function SettingsPage() {
         default_lead_time: companySettings.defaultLeadTime || 14,
         // 기존 컬럼도 동기화 (하위 호환)
         name: companySettings.companyName || '',
-        company_name_kr: companySettings.companyNameKr || null,
         updated_at: new Date().toISOString(),
       };
 
@@ -120,7 +119,7 @@ export default function SettingsPage() {
       // DB → store 매핑 (DB 값이 있으면 덮어쓰기)
       const updates: Partial<typeof companySettings> = {};
       if (cd.company_name || cd.name) updates.companyName = cd.company_name || cd.name;
-      if (cd.company_name_ko || cd.company_name_kr) updates.companyNameKr = cd.company_name_ko || cd.company_name_kr;
+      if (cd.company_name_ko) updates.companyNameKr = cd.company_name_ko;
       if (cd.representative) updates.ceoName = cd.representative;
       if (cd.contact_name) updates.contactName = cd.contact_name;
       if (cd.contact_title) updates.contactTitle = cd.contact_title;
