@@ -42,7 +42,7 @@ hotfix/이슈명 ─────────────────┘
 - 팀 합류 시 `.env.example`을 참고해 `.env.local` 직접 생성
 
 ### Edge Function 보안
-- `GEMINI_API_KEY` → Supabase Vault: `supabase secrets set GEMINI_API_KEY=...`
+- `ANTHROPIC_API_KEY` → Supabase Vault: `supabase secrets set ANTHROPIC_API_KEY=...`
 - `SUPABASE_SERVICE_ROLE_KEY` → Edge Function에서만 사용, 프론트엔드 노출 금지
 
 ---
@@ -51,8 +51,8 @@ hotfix/이슈명 ─────────────────┘
 
 | 항목 | 값 |
 |------|-----|
-| 메인 AI 모델 | `gemini-2.5-pro` |
-| API 엔드포인트 | `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro` |
+| 메인 AI 모델 | `claude-sonnet-4-5` (Anthropic) |
+| SDK | `@anthropic-ai/sdk` (esm.sh 경유) |
 
 - 모델명 변경 시 **전체 팀 합의 필요** + 이 문서 업데이트
 - 모델 관련 파일: `supabase/functions/trade-assistant/index.ts`
@@ -70,7 +70,7 @@ supabase functions list
 ```
 
 현재 배포된 함수 (9개):
-- `trade-assistant` — 메인 AI 채팅 (Gemini 2-phase streaming)
+- `trade-assistant` — 메인 AI 채팅 (Claude claude-sonnet-4-5 JSON 응답)
 - `ocr-extract` — 이미지 OCR
 - `generate-email` — 이메일 생성
 - `share-package` — 공유 패키지
