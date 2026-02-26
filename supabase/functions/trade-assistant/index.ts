@@ -1,380 +1,260 @@
-import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.27.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.27.0";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const MODEL = "claude-sonnet-4-5";
+const MAX_TOKENS = 4096;
+const MAX_AGENTIC_LOOPS = 5;
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// SYSTEM PROMPT (핵심 규칙만, 토큰 최소화)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const SYSTEM_PROMPT = `You are FLONIX AI, K-Beauty export trade assistant.
+function buildSystemPrompt(ctx: any): string {
+  const seller = ctx.seller
+    ? `회사명: ${ctx.seller.company_name}, 주소: ${ctx.seller.address||'미등록'}, Tel: ${ctx.seller.tel||'미등록'}, Email: ${ctx.seller.email||'미등록'}, 담당자: ${ctx.seller.contact_person||'미등록'}, 사업자번호: ${ctx.seller.business_no||'미등록'}`
+    : "판매자 정보 미등록 - 설정 페이지에서 회사 정보를 등록하도록 안내";
 
-RULES:
-1. Call get_user_context FIRST before any document generation.
-2. If seller null: tell user to save company info in Settings(설정) page. Do NOT generate document.
-3. Never invent data. Use only get_user_context results.
-4. Reply in Korean. Documents in English.
-5. Use generate_document tool for all document output.
-6. COO: Republic of Korea. Currency: USD. Incoterms 2020.
+  const buyers = ctx.buyers?.length
+    ? ctx.buyers.map((b:any,i:number)=>`${i+1}. ${b.company_name} (${b.country||'?'}) - ${b.contact_name||''} <${b.contact_email||''}>`).join('\n')
+    : "등록된 바이어 없음";
 
-PI: doc no(FLONIX-PI-YYYYMMDD-XXXX), seller/buyer blocks, items table(HS Code/COO/Unit/Qty/Unit Price/Amount), payment terms, bank info, T&C(4 clauses: validity 30days/samples available/GMP quality/Korea governing law), signature, SAY USD ONLY.
-CI: PI fields + B/L No + weight columns + certification statement.
-PL: carton table(qty/carton/cartons/total qty/NW/GW/CBM/batch no), shipping mark, cargo summary.
-EMAIL: subject by stage, Dear Ms/Mr [name], body, CTA+deadline, Best regards+signature.`;
+  const products = ctx.products?.length
+    ? ctx.products.map((p:any,i:number)=>`${i+1}. ${p.name_en||p.name_kr||'이름없음'} | SKU:${p.sku_code||'-'} | HS:${p.hs_code||'미확인'}`).join('\n')
+    : "등록된 제품 없음";
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// TOOLS 정의
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const tools: Anthropic.Tool[] = [
+  return `당신은 FLONIX의 수석 AI 무역 어시스턴트입니다. K-뷰티 수출 전문가입니다.
+
+[판매자 정보]
+${seller}
+
+[바이어 목록]
+${buyers}
+
+[제품 목록]
+${products}
+
+[역할]
+1. PI/CI/PL/NDA/Sales Contract 국제 표준 서류 작성
+2. 11개국 화장품 규제 컴플라이언스: 미국(MoCRA), EU(CPNP), 중국(NMPA), 일본(약기법), 동남아6개국, 중동2개국
+3. HS Code 분류, Incoterms 2020 안내
+4. 수출 물류/통관 절차 가이드
+
+[서류 품질 기준]
+PI 필수: 문서번호, 발행일, 유효기간, Seller/Buyer 완전정보, HS Code, Incoterms 2020, 결제조건, 선적항/도착항, 원산지(Republic of Korea), 총액/총중량/CBM, 은행정보, 서명란
+CI 추가: L/C Number, B/L Number, Shipping Mark, Declaration 문구
+PL 필수: 박스수량, 박스별내용물, Net/Gross Weight, CBM
+
+[Function Calling 규칙]
+- 서류 생성 → generate_trade_document 반드시 호출
+- 규제 체크 → check_compliance 반드시 호출
+- 일반 질문 → 텍스트 직접 응답
+- 한국어 질문 → 한국어 답변, 서류 자체는 영문`;
+}
+
+const TOOLS: Anthropic.Messages.Tool[] = [
   {
-    name: "get_user_context",
-    description: "Fetch seller company info, registered buyers, and products from the database. MUST be called before any document generation.",
-    input_schema: {
-      type: "object" as const,
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: "generate_document",
-    description: "Render a trade document as a rich UI component in the right panel.",
+    name: "generate_trade_document",
+    description: "PI/CI/PL/NDA/Sales Contract 등 국제 무역 서류를 법적·상업적 국제 표준으로 생성",
     input_schema: {
       type: "object" as const,
       properties: {
-        type: {
-          type: "string",
-          enum: ["PI", "CI", "PL", "EMAIL", "NDA", "PROPOSAL"],
-          description: "Document type",
-        },
-        data: {
+        document_type: { type: "string", enum: ["PI","CI","PL","NDA","SALES_CONTRACT","EMAIL","PROPOSAL"] },
+        document_number: { type: "string" },
+        issue_date: { type: "string" },
+        validity_date: { type: "string" },
+        seller: {
           type: "object",
-          description: "Complete document data structured for rendering",
+          properties: {
+            company_name:{type:"string"}, address:{type:"string"}, tel:{type:"string"},
+            email:{type:"string"}, contact_person:{type:"string"}, business_no:{type:"string"},
+            bank_info:{type:"object",properties:{bank_name:{type:"string"},account_no:{type:"string"},swift_code:{type:"string"}}}
+          }, required:["company_name"]
         },
+        buyer: {
+          type: "object",
+          properties: {
+            company_name:{type:"string"}, address:{type:"string"}, country:{type:"string"},
+            contact_person:{type:"string"}, email:{type:"string"}, tel:{type:"string"}
+          }, required:["company_name"]
+        },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              product_name:{type:"string"}, hs_code:{type:"string"},
+              quantity:{type:"number"}, unit:{type:"string",enum:["PCS","SET","BOX","CTN","KG","L"]},
+              unit_price:{type:"number"}, currency:{type:"string",enum:["USD","EUR","JPY","CNY","KRW"]},
+              net_weight_kg:{type:"number"}, gross_weight_kg:{type:"number"},
+              cbm:{type:"number"}, country_of_origin:{type:"string",default:"Republic of Korea"},
+              description:{type:"string"}
+            }, required:["product_name","quantity","unit_price"]
+          }
+        },
+        trade_terms: {
+          type: "object",
+          properties: {
+            incoterms:{type:"string",enum:["EXW","FCA","FOB","CFR","CIF","CPT","CIP","DAP","DPU","DDP"]},
+            payment_terms:{type:"string"}, port_of_loading:{type:"string"},
+            port_of_discharge:{type:"string"}, shipping_mark:{type:"string"},
+            etd:{type:"string"}, eta:{type:"string"}
+          }
+        },
+        special_conditions:{type:"string"}, remarks:{type:"string"}
       },
-      required: ["type", "data"],
-    },
+      required: ["document_type","items"]
+    }
   },
+  {
+    name: "check_compliance",
+    description: "K-뷰티 화장품의 수출 대상국 규제 적합성 분석 및 실행 액션 제시",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        target_country:{type:"string"},
+        product_name:{type:"string"},
+        product_category:{type:"string",enum:["skincare","makeup","haircare","bodycare","sunscreen","functional_cosmetic"]},
+        ingredients:{type:"array",items:{type:"string"}},
+        claims:{type:"array",items:{type:"string"}},
+        overall_status:{type:"string",enum:["PASS","FAIL","CAUTION"]},
+        checks:{type:"array",items:{type:"object",properties:{
+          category:{type:"string"},status:{type:"string",enum:["PASS","FAIL","CAUTION"]},
+          issue:{type:"string"},action_required:{type:"string"},
+          deadline:{type:"string"},reference_law:{type:"string"}
+        },required:["category","status"]}},
+        summary:{type:"string"},
+        urgent_actions:{type:"array",items:{type:"string"}}
+      },
+      required:["target_country","product_name","overall_status","checks","summary"]
+    }
+  }
 ];
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// DB 조회 함수
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-async function fetchUserContext(supabaseClient: any, userId: string) {
-  try {
-    const [companiesRes, buyersRes, productsRes] = await Promise.all([
-      supabaseClient
-        .from("companies")
-        .select([
-          "company_name",
-          "company_name_ko",
-          "representative",
-          "address",
-          "phone",
-          "email",
-          "website",
-          "contact_name",
-          "contact_title",
-          "contact_phone",
-          "contact_email",
-          "email_signature",
-          "bank_info",
-          "export_countries",
-          "certifications"
-        ].join(","))
-        .eq("user_id", userId)
-        .maybeSingle(),
+async function fetchUserContext(userId: string) {
+  const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+  const [companyRes, profileRes, buyersRes, productsRes] = await Promise.all([
+    sb.from("companies").select("company_name,address,tel,email,contact_name,business_no,bank_info").eq("user_id",userId).maybeSingle(),
+    sb.from("profiles").select("company_info,full_name,email").eq("id",userId).maybeSingle(),
+    sb.from("buyers").select("company_name,country,contact_name,contact_email,contact_phone,buyer_type,channel").eq("user_id",userId).limit(20),
+    sb.from("products").select("name_en,name_kr,sku_code,hs_code,unit_price_range,moq,category").eq("user_id",userId).limit(30),
+  ]);
 
-      // buyers: 실제 DB 컬럼에 맞춤
-      supabaseClient
-        .from("buyers")
-        .select([
-          "id",
-          "company_name",
-          "contact_name",
-          "contact_email",
-          "contact_phone",
-          "country",
-          "website",
-          "buyer_type",
-          "channel",
-          "payment_terms",
-          "currency",
-          "status_stage"
-        ].join(","))
-        .eq("user_id", userId)
-        .order("updated_at", { ascending: false })
-        .limit(10),
-
-      // products: 실제 DB 컬럼에 맞춤 (ingredients 완전 제외)
-      supabaseClient
-        .from("products")
-        .select([
-          "id",
-          "name",
-          "name_en",
-          "category",
-          "sku_code",
-          "hs_code",
-          "hs_code_candidate",
-          "size_ml_g",
-          "moq",
-          "unit_price_range",
-          "status"
-        ].join(","))
-        .eq("user_id", userId)
-        .order("updated_at", { ascending: false })
-        .limit(15),
-    ]);
-
-    const co = companiesRes.data;
-
-    // 토큰 사용량 사전 검증
-    // products 정규화: DB 컬럼명 → AI가 이해하기 쉬운 필드명
-    const normalizedProducts = (productsRes.data || []).map((p: any) => ({
-      id: p.id,
-      name: p.name || p.name_en || null,
-      category: p.category || null,
-      sku_code: p.sku_code || null,
-      hs_code: p.hs_code || p.hs_code_candidate || null,
-      unit_price: p.unit_price_range?.base ?? null,
-      size_ml_g: p.size_ml_g ?? null,
-      moq: p.moq ?? null,
-      status: p.status || null,
-    }));
-
-    const ctx = {
-      seller: co ? {
-        company_name: co.company_name || null,
-        company_name_ko: co.company_name_ko || null,
-        representative: co.representative || null,
-        address: co.address || null,
-        phone: co.phone || null,
-        email: co.email || null,
-        website: co.website || null,
-        export_countries: co.export_countries || [],
-        certifications: co.certifications || [],
-        contact_name: co.contact_name || null,
-        contact_title: co.contact_title || null,
-        contact_phone: co.contact_phone || null,
-        contact_email: co.contact_email || null,
-        email_signature: co.email_signature || null,
-        bank_info: co.bank_info || null,
-      } : null,
-      buyers: buyersRes.data || [],
-      products: normalizedProducts,
-    };
-
-    // 토큰 추정 및 로깅
-    const jsonStr = JSON.stringify(ctx);
-    const estimatedTokens = Math.ceil(jsonStr.length / 4);
-    console.log(`[FLONIX] context size: ${jsonStr.length} chars, ~${estimatedTokens} tokens`);
-    console.log(`[FLONIX] buyers: ${ctx.buyers.length}, products: ${ctx.products.length}`);
-
-    return ctx;
-
-  } catch (dbError: any) {
-    console.error("[FLONIX] fetchUserContext error:", dbError.message);
-    return { seller: null, buyers: [], products: [] };
+  let seller = null;
+  if (companyRes.data) {
+    seller = { company_name:companyRes.data.company_name, address:companyRes.data.address, tel:companyRes.data.tel, email:companyRes.data.email, contact_person:companyRes.data.contact_name, business_no:companyRes.data.business_no, bank_info:companyRes.data.bank_info };
+  } else if (profileRes.data?.company_info) {
+    const ci = profileRes.data.company_info as any;
+    seller = { company_name:ci.company_name||ci.companyName||profileRes.data.full_name||"미등록", address:ci.address, tel:ci.tel||ci.phone, email:ci.email||profileRes.data.email, contact_person:ci.contact_person||ci.contactPerson, business_no:ci.business_no, bank_info:ci.bank_info };
   }
+  return { seller, buyers: buyersRes.data||[], products: productsRes.data||[] };
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// base64 정제 함수
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function cleanBase64(data: string): string {
-  const idx = data.indexOf(",");
-  return idx !== -1 ? data.substring(idx + 1) : data;
+function trimHistory(messages: any[], hasFile: boolean) {
+  const max = hasFile ? 4 : 12;
+  return messages.length <= max ? messages : messages.slice(-max);
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// MAIN HANDLER
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function createPusher(controller: ReadableStreamDefaultController) {
+  return (event: string, data: unknown) => {
+    controller.enqueue(new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+  };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response(null, { headers: {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization, content-type","Access-Control-Allow-Methods":"POST, OPTIONS"} });
   }
-
   try {
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) throw new Error("Authorization header required");
+    const sbAnon = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!);
+    const { data:{ user }, error:authError } = await sbAnon.auth.getUser(authHeader.replace("Bearer ",""));
+    if (authError || !user) throw new Error("인증 실패: 다시 로그인해주세요");
+
     const body = await req.json();
-    const { messages = [], attachedFile, userId } = body;
+    const { messages: rawMessages = [], hasFile = false } = body;
+    const userContext = await fetchUserContext(user.id);
+    const trimmedMessages = trimHistory(rawMessages, hasFile);
+    const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-    // Supabase client 생성
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabaseClient = createClient(supabaseUrl, supabaseKey);
+    const stream = new ReadableStream({
+      async start(controller) {
+        const push = createPusher(controller);
+        try {
+          let loopCount = 0;
+          let currentMessages: any[] = trimmedMessages;
+          let finalText = "";
 
-    // Anthropic client 생성
-    const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY")!;
-    const anthropic = new Anthropic({ apiKey: anthropicKey });
+          while (loopCount < MAX_AGENTIC_LOOPS) {
+            loopCount++;
+            const streamResponse = await anthropic.messages.create({
+              model: MODEL, max_tokens: MAX_TOKENS,
+              system: buildSystemPrompt(userContext),
+              tools: TOOLS, messages: currentMessages, stream: true,
+            });
 
-    // ⚡ 히스토리 엄격 제한 - 토큰 초과 방지
-    const MAX_HISTORY = attachedFile ? 2 : 6;
-    const allMessages = messages || [];
-    const trimmedMessages = allMessages.length > MAX_HISTORY
-      ? allMessages.slice(-MAX_HISTORY)
-      : allMessages;
+            let currentText = "", currentToolName = "", currentToolId = "", currentToolInput = "", stopReason = "";
+            const toolResults: any[] = [];
+            const assistantContent: any[] = [];
 
-    // Claude 메시지 형식 변환
-    const claudeMessages: Anthropic.MessageParam[] = trimmedMessages.map((msg: any, idx: number) => {
-      // 마지막 사용자 메시지에 이미지 첨부
-      if (idx === trimmedMessages.length - 1 && msg.role === "user" && attachedFile) {
-        const content: Anthropic.ContentBlockParam[] = [];
-
-        if (attachedFile.mimeType === "application/pdf") {
-          content.push({
-            type: "document",
-            source: {
-              type: "base64",
-              media_type: "application/pdf",
-              data: cleanBase64(attachedFile.base64),
-            },
-          } as any);
-        } else {
-          const validImageTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-          const mimeType = validImageTypes.includes(attachedFile.mimeType)
-            ? attachedFile.mimeType
-            : "image/jpeg";
-          content.push({
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: mimeType,
-              data: cleanBase64(attachedFile.base64),
-            },
-          } as any);
-        }
-
-        content.push({ type: "text", text: msg.content });
-        return { role: "user", content };
-      }
-
-      return {
-        role: msg.role === "assistant" ? "assistant" : "user",
-        content: msg.content,
-      };
-    });
-
-    // Agentic loop (tool use 처리)
-    let responseText = "";
-    let documentData: { type: string; data: any } | null = null;
-    const currentMessages = [...claudeMessages];
-
-    for (let iteration = 0; iteration < 5; iteration++) {
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-5",
-        max_tokens: 8192,
-        system: SYSTEM_PROMPT,
-        tools,
-        messages: currentMessages,
-      });
-
-      // 토큰 사용량 로그
-      console.log(`[FLONIX] tokens - input: ${response.usage.input_tokens}, output: ${response.usage.output_tokens}`);
-
-      if (response.stop_reason === "end_turn") {
-        for (const block of response.content) {
-          if (block.type === "text") responseText += block.text;
-        }
-        break;
-      }
-
-      if (response.stop_reason === "tool_use") {
-        const assistantContent = response.content;
-        currentMessages.push({ role: "assistant", content: assistantContent });
-
-        const toolResults: Anthropic.ToolResultBlockParam[] = [];
-
-        for (const block of assistantContent) {
-          if (block.type !== "tool_use") continue;
-
-          let toolResult: any;
-
-          if (block.name === "get_user_context") {
-            if (!userId) {
-              toolResult = { error: "No user ID provided" };
-            } else {
-              toolResult = await fetchUserContext(supabaseClient, userId);
-              // 토큰 초과 방지: tool result가 50K 토큰(~200K chars) 초과 시 압축
-              const resultStr = JSON.stringify(toolResult);
-              const estimatedTokens = Math.ceil(resultStr.length / 4);
-              if (estimatedTokens > 50000) {
-                console.warn(`[FLONIX] Tool result too large: ~${estimatedTokens} tokens. Compressing...`);
-                toolResult = {
-                  seller: toolResult.seller,
-                  buyers: (toolResult.buyers || []).slice(0, 5),
-                  products: (toolResult.products || []).slice(0, 10),
-                  _truncated: true,
-                  _original_counts: {
-                    buyers: (toolResult.buyers || []).length,
-                    products: (toolResult.products || []).length,
-                  },
-                };
+            for await (const chunk of streamResponse) {
+              if (chunk.type === "content_block_start") {
+                if (chunk.content_block.type === "tool_use") {
+                  currentToolName = chunk.content_block.name;
+                  currentToolId = chunk.content_block.id;
+                  currentToolInput = "";
+                  push("tool_call_start", { tool_name: currentToolName, tool_id: currentToolId });
+                }
+              } else if (chunk.type === "content_block_delta") {
+                if (chunk.delta.type === "text_delta") {
+                  currentText += chunk.delta.text;
+                  finalText += chunk.delta.text;
+                  push("text_delta", { text: chunk.delta.text });
+                } else if (chunk.delta.type === "input_json_delta") {
+                  currentToolInput += chunk.delta.partial_json;
+                  push("tool_input_delta", { tool_name: currentToolName, tool_id: currentToolId, partial_json: chunk.delta.partial_json, accumulated: currentToolInput });
+                }
+              } else if (chunk.type === "content_block_stop") {
+                if (currentToolInput) {
+                  try {
+                    const parsed = JSON.parse(currentToolInput);
+                    assistantContent.push({ type:"tool_use", id:currentToolId, name:currentToolName, input:parsed });
+                    push("tool_call_complete", { tool_name: currentToolName, tool_id: currentToolId, document: parsed });
+                    toolResults.push({ type:"tool_result", tool_use_id:currentToolId, content: JSON.stringify({ status:"success", data:parsed }) });
+                  } catch(e) { console.error("parse error",e); }
+                  currentToolInput = ""; currentToolName = ""; currentToolId = "";
+                } else if (currentText) {
+                  assistantContent.push({ type:"text", text:currentText });
+                  currentText = "";
+                }
+              } else if (chunk.type === "message_delta") {
+                stopReason = chunk.delta.stop_reason || "";
               }
             }
-          } else if (block.name === "generate_document") {
-            const input = block.input as { type: string; data: any };
-            documentData = { type: input.type, data: input.data };
-            toolResult = { success: true, message: "Document rendered successfully" };
-          } else {
-            toolResult = { error: `Unknown tool: ${block.name}` };
+
+            if (stopReason === "end_turn" || toolResults.length === 0) break;
+            if (stopReason === "tool_use" && toolResults.length > 0) {
+              currentMessages = [...currentMessages, { role:"assistant", content:assistantContent }, { role:"user", content:toolResults }];
+            }
           }
 
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: block.id,
-            content: JSON.stringify(toolResult),
-          });
+          // 메시지 저장
+          if (finalText) {
+            const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+            await sb.from("ai_chat_messages").insert({ user_id:user.id, role:"assistant", content:finalText, created_at:new Date().toISOString() });
+          }
+
+          push("stream_end", { total_loops: loopCount, timestamp: Date.now() });
+        } catch(err) {
+          push("error", { message: err instanceof Error ? err.message : "알 수 없는 오류" });
+        } finally {
+          controller.close();
         }
-
-        currentMessages.push({ role: "user", content: toolResults });
-        continue;
       }
+    });
 
-      // 기타 stop reason
-      for (const block of response.content) {
-        if (block.type === "text") responseText += block.text;
-      }
-      break;
-    }
-
-    return new Response(
-      JSON.stringify({
-        message: responseText,
-        document: documentData,
-      }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
-  } catch (err: any) {
-    console.error("[FLONIX ERROR]", err?.message || err, err?.stack || "");
-    const msg = (err?.message || "").toLowerCase();
-    let userMsg = "AI 서비스 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
-    let debugMsg = err?.message || String(err);
-
-    if (msg.includes("credit balance") || msg.includes("billing") || msg.includes("purchase credits")) {
-      userMsg = "AI API 크레딧이 부족합니다. 관리자에게 Anthropic 결제 설정을 요청해주세요.";
-    } else if (msg.includes("overload") || msg.includes("529")) {
-      userMsg = "AI 서비스가 일시적으로 혼잡합니다. 잠시 후 다시 시도해주세요.";
-    } else if (msg.includes("invalid api key") || msg.includes("401") || msg.includes("authentication")) {
-      userMsg = "API 키 설정 오류입니다. 관리자에게 문의해주세요.";
-    } else if (msg.includes("base64") || msg.includes("image")) {
-      userMsg = "파일 처리 오류입니다. 이미지를 JPG로 저장 후 다시 업로드해주세요.";
-    } else if (msg.includes("prompt is too long") || msg.includes("token") || msg.includes("context length") || msg.includes("max_tokens")) {
-      userMsg = "대화가 너무 길어져서 처리할 수 없습니다. 새 대화를 시작해주세요.";
-    } else if (msg.includes("module") || msg.includes("import") || msg.includes("not found")) {
-      userMsg = "서버 모듈 로딩 오류입니다. 관리자에게 문의해주세요.";
-    }
-
-    return new Response(
-      JSON.stringify({ error: true, message: userMsg, debug: debugMsg }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return new Response(stream, { headers: {"Content-Type":"text/event-stream","Cache-Control":"no-cache","Connection":"keep-alive","Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization, content-type"} });
+  } catch(err) {
+    const msg = err instanceof Error ? err.message : "서버 오류";
+    return new Response(JSON.stringify({ error: msg }), { status:400, headers:{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"} });
   }
 });
