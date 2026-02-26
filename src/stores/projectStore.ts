@@ -25,6 +25,13 @@ export interface ProjectContext {
   paymentDefault: PaymentTerms;
 }
 
+export interface BankInfo {
+  bankName: string;
+  accountNumber: string;
+  swiftCode: string;
+  accountHolder: string;
+}
+
 export interface CompanySettings {
   companyName: string;
   companyNameKr: string;
@@ -34,6 +41,8 @@ export interface CompanySettings {
   contactEmail: string;
   contactPhone: string;
   address: string;
+  phone: string;
+  email: string;
   website: string;
   logoUrl: string;
   stampImageUrl: string;
@@ -41,6 +50,8 @@ export interface CompanySettings {
   introPdfUrl: string;
   introPdfName: string;
   exportCountries: TargetCountry[];
+  certifications: string[];
+  bankInfo: BankInfo | null;
   defaultMoq: number;
   defaultLeadTime: number;
   brandTone: '격식' | '친근';
@@ -146,6 +157,8 @@ const DEFAULT_COMPANY_SETTINGS: CompanySettings = {
   contactEmail: '',
   contactPhone: '',
   address: '',
+  phone: '',
+  email: '',
   website: '',
   logoUrl: '',
   stampImageUrl: '',
@@ -153,6 +166,8 @@ const DEFAULT_COMPANY_SETTINGS: CompanySettings = {
   introPdfUrl: '',
   introPdfName: '',
   exportCountries: [],
+  certifications: [],
+  bankInfo: null,
   defaultMoq: 500,
   defaultLeadTime: 14,
   brandTone: '격식',

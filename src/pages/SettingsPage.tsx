@@ -47,60 +47,46 @@ export default function SettingsPage() {
     }
     setSaving(true);
     try {
-      // companies 테이블 upsert (새 컬럼명 기준)
-      const row = {
+      const companyData = {
         user_id: user.id,
-        // 새 정규화 컬럼
         company_name: companySettings.companyName || null,
         company_name_ko: companySettings.companyNameKr || null,
         representative: companySettings.ceoName || null,
+        address: companySettings.address || null,
+        phone: companySettings.phone || null,
+        email: companySettings.email || null,
+        website: companySettings.website || null,
+        export_countries: companySettings.exportCountries || [],
+        certifications: companySettings.certifications || [],
         contact_name: companySettings.contactName || null,
         contact_title: companySettings.contactTitle || null,
-        contact_email: companySettings.contactEmail || null,
         contact_phone: companySettings.contactPhone || null,
-        address: companySettings.address || null,
-        website: companySettings.website || null,
+        contact_email: companySettings.contactEmail || null,
+        email_signature: companySettings.emailSignature || null,
         logo_url: companySettings.logoUrl || null,
         seal_url: companySettings.stampImageUrl || null,
         signature_url: companySettings.signatureImageUrl || null,
-        email_signature: companySettings.emailSignature || null,
-        export_countries: companySettings.exportCountries || [],
+        bank_info: companySettings.bankInfo || null,
         default_moq: companySettings.defaultMoq || 500,
         default_lead_time: companySettings.defaultLeadTime || 14,
-        // 기존 컬럼도 동기화 (하위 호환)
         name: companySettings.companyName || '',
         updated_at: new Date().toISOString(),
       };
 
-      const { error: upsertErr } = await supabase
+      const { error } = await supabase
         .from('companies')
-        .upsert(row, { onConflict: 'user_id' });
-      if (upsertErr) throw upsertErr;
+        .upsert(companyData, { onConflict: 'user_id', ignoreDuplicates: false });
 
-      // profiles.company_info 백업 (AI fallback)
-      await supabase
-        .from('profiles')
-        .update({
-          company_info: {
-            company_name: companySettings.companyName,
-            company_name_ko: companySettings.companyNameKr,
-            ceo_name: companySettings.ceoName,
-            contact_name: companySettings.contactName,
-            contact_title: companySettings.contactTitle,
-            contact_email: companySettings.contactEmail,
-            contact_phone: companySettings.contactPhone,
-            address: companySettings.address,
-            website: companySettings.website,
-            export_countries: companySettings.exportCountries,
-            email_signature: companySettings.emailSignature,
-          },
-        })
-        .eq('user_id', user.id);
+      if (error) {
+        console.error('저장 오류:', error);
+        toast.error(`저장 실패: ${error.message}`);
+        return;
+      }
 
-      toast.success('설정이 저장되었습니다. AI 에이전트가 이 정보를 사용합니다.');
+      toast.success('회사 정보가 저장되었습니다. AI 에이전트가 이 정보를 사용합니다.');
     } catch (e) {
-      console.error('Save error:', e);
-      toast.error(`저장 실패: ${(e as Error).message}`);
+      console.error('handleSave error:', e);
+      toast.error(`저장 중 오류가 발생했습니다.`);
     } finally {
       setSaving(false);
     }
@@ -110,32 +96,43 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const { data: cd } = await supabase
-        .from('companies')
-        .select('*')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      if (!cd) return;
-      // DB → store 매핑 (DB 값이 있으면 덮어쓰기)
-      const updates: Partial<typeof companySettings> = {};
-      if (cd.company_name || cd.name) updates.companyName = cd.company_name || cd.name;
-      if (cd.company_name_ko) updates.companyNameKr = cd.company_name_ko;
-      if (cd.representative) updates.ceoName = cd.representative;
-      if (cd.contact_name) updates.contactName = cd.contact_name;
-      if (cd.contact_title) updates.contactTitle = cd.contact_title;
-      if (cd.contact_email) updates.contactEmail = cd.contact_email;
-      if (cd.contact_phone) updates.contactPhone = cd.contact_phone;
-      if (cd.address) updates.address = cd.address;
-      if (cd.website) updates.website = cd.website;
-      if (cd.logo_url) updates.logoUrl = cd.logo_url;
-      if (cd.seal_url) updates.stampImageUrl = cd.seal_url;
-      if (cd.signature_url) updates.signatureImageUrl = cd.signature_url;
-      if (cd.email_signature) updates.emailSignature = cd.email_signature;
-      if (cd.export_countries?.length) updates.exportCountries = cd.export_countries;
-      if (cd.default_moq) updates.defaultMoq = cd.default_moq;
-      if (cd.default_lead_time) updates.defaultLeadTime = cd.default_lead_time;
-      if (Object.keys(updates).length > 0) {
-        setCompanySettings(updates as any);
+      try {
+        const { data, error } = await supabase
+          .from('companies')
+          .select('*')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (error) {
+          console.error('회사정보 불러오기 오류:', error);
+          return;
+        }
+        if (!data) return;
+
+        setCompanySettings({
+          companyName: data.company_name || data.name || '',
+          companyNameKr: data.company_name_ko || '',
+          ceoName: data.representative || '',
+          address: data.address || '',
+          phone: data.phone || '',
+          email: data.email || '',
+          website: data.website || '',
+          exportCountries: data.export_countries || [],
+          certifications: data.certifications || [],
+          contactName: data.contact_name || '',
+          contactTitle: data.contact_title || '',
+          contactPhone: data.contact_phone || '',
+          contactEmail: data.contact_email || '',
+          emailSignature: data.email_signature || '',
+          logoUrl: data.logo_url || '',
+          stampImageUrl: data.seal_url || '',
+          signatureImageUrl: data.signature_url || '',
+          bankInfo: data.bank_info || null,
+          defaultMoq: data.default_moq || 500,
+          defaultLeadTime: data.default_lead_time || 14,
+        });
+      } catch (err) {
+        console.error('loadCompanyData error:', err);
       }
     })();
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -280,6 +277,23 @@ export default function SettingsPage() {
                       placeholder="123, Gangnam-daero, Gangnam-gu, Seoul, 06164, Republic of Korea"
                     />
                   </div>
+                  <div className="space-y-2">
+                    <Label>대표 전화번호</Label>
+                    <Input
+                      value={companySettings.phone}
+                      onChange={(e) => setCompanySettings({ phone: e.target.value })}
+                      placeholder="+82-2-1234-5678"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>대표 이메일</Label>
+                    <Input
+                      type="email"
+                      value={companySettings.email}
+                      onChange={(e) => setCompanySettings({ email: e.target.value })}
+                      placeholder="info@company.com"
+                    />
+                  </div>
                 </CardContent>
               </Card>
 
@@ -319,6 +333,85 @@ export default function SettingsPage() {
                       ✅ {(companySettings.exportCountries || []).length}개국 선택됨
                     </p>
                   )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <CheckCircle className="h-5 w-5 text-primary" />
+                    인증 정보
+                  </CardTitle>
+                  <CardDescription>
+                    보유한 인증을 입력하세요. (예: GMP, ISO 22716, CPNP 등)
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Input
+                    value={(companySettings.certifications || []).join(', ')}
+                    onChange={(e) => {
+                      const certs = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
+                      setCompanySettings({ certifications: certs });
+                    }}
+                    placeholder="GMP, ISO 22716, CPNP, FDA"
+                  />
+                  <p className="text-xs text-muted-foreground mt-2">
+                    쉼표(,)로 구분하여 입력해주세요.
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Building2 className="h-5 w-5 text-primary" />
+                    은행 정보 (Banking Information)
+                  </CardTitle>
+                  <CardDescription>
+                    PI, CI 등 무역 문서에 자동 반영됩니다.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>은행명 (Bank Name)</Label>
+                    <Input
+                      value={companySettings.bankInfo?.bankName || ''}
+                      onChange={(e) => setCompanySettings({
+                        bankInfo: { ...(companySettings.bankInfo || { bankName: '', accountNumber: '', swiftCode: '', accountHolder: '' }), bankName: e.target.value }
+                      })}
+                      placeholder="Kookmin Bank"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>SWIFT Code</Label>
+                    <Input
+                      value={companySettings.bankInfo?.swiftCode || ''}
+                      onChange={(e) => setCompanySettings({
+                        bankInfo: { ...(companySettings.bankInfo || { bankName: '', accountNumber: '', swiftCode: '', accountHolder: '' }), swiftCode: e.target.value }
+                      })}
+                      placeholder="CZNBKRSE"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>계좌번호 (Account Number)</Label>
+                    <Input
+                      value={companySettings.bankInfo?.accountNumber || ''}
+                      onChange={(e) => setCompanySettings({
+                        bankInfo: { ...(companySettings.bankInfo || { bankName: '', accountNumber: '', swiftCode: '', accountHolder: '' }), accountNumber: e.target.value }
+                      })}
+                      placeholder="123-456-789012"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>예금주 (Account Holder)</Label>
+                    <Input
+                      value={companySettings.bankInfo?.accountHolder || ''}
+                      onChange={(e) => setCompanySettings({
+                        bankInfo: { ...(companySettings.bankInfo || { bankName: '', accountNumber: '', swiftCode: '', accountHolder: '' }), accountHolder: e.target.value }
+                      })}
+                      placeholder="K-Beauty Co., Ltd."
+                    />
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
