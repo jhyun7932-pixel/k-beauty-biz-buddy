@@ -16,7 +16,6 @@ export default function HomePage() {
     phase,
     messages,
     currentStreamingText,
-    currentPhase2Text,
     rightPanelOpen,
     error,
   } = useStreamingChat();
@@ -35,7 +34,6 @@ export default function HomePage() {
       <ChatPanel
         messages={messages}
         currentStreamingText={currentStreamingText}
-        currentPhase2Text={currentPhase2Text}
         isStreaming={isStreaming}
         phase={phase}
         error={error}

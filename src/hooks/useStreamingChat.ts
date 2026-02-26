@@ -73,20 +73,39 @@ export function useStreamingChat() {
           }
         );
 
+        // HTTP 에러 처리 (4xx, 5xx)
         if (!res.ok) {
-          const txt = await res.text();
+          let errorDetail = "";
+          try {
+            const errJson = await res.json();
+            errorDetail = errJson.message || errJson.error || JSON.stringify(errJson);
+          } catch {
+            errorDetail = await res.text().catch(() => "응답을 읽을 수 없습니다.");
+          }
+          const errorMsg = `서버 오류 (${res.status}): ${errorDetail}`;
+          console.error("[useStreamingChat]", errorMsg);
           toast.warning(`서버 오류 (${res.status})`);
-          store.setError(`서버 오류 (${res.status}): ${txt}`);
+          store.setError(errorMsg);
           return;
         }
 
-        const json = await res.json();
+        // JSON 파싱
+        let json: any;
+        try {
+          json = await res.json();
+        } catch (parseErr) {
+          console.error("[useStreamingChat] JSON 파싱 실패:", parseErr);
+          store.setError("서버 응답을 파싱할 수 없습니다.");
+          return;
+        }
 
-        // 에러 응답 처리
+        // 서버 에러 응답 처리 (status 200이지만 error: true)
         if (json.error) {
-          const msg = json.message || "알 수 없는 오류가 발생했습니다.";
-          toast.warning(msg);
-          store.setError(msg);
+          const errorMsg = json.message || "알 수 없는 오류가 발생했습니다.";
+          const debugInfo = json.debug || "";
+          console.error("[useStreamingChat] 서버 에러:", errorMsg, debugInfo);
+          toast.warning(errorMsg);
+          store.setError(debugInfo ? `${errorMsg}\n(상세: ${debugInfo})` : errorMsg);
           return;
         }
 
@@ -134,6 +153,7 @@ export function useStreamingChat() {
         if ((err as Error).name === "AbortError") {
           store.reset();
         } else {
+          console.error("[useStreamingChat] catch:", err);
           store.setError(`네트워크 오류: ${(err as Error).message}`);
         }
       }
@@ -154,7 +174,6 @@ export function useStreamingChat() {
     phase: store.phase,
     messages: store.messages,
     currentStreamingText: store.currentStreamingText,
-    currentPhase2Text: store.currentPhase2Text,
     toolCall: store.toolCall,
     rightPanelOpen: store.rightPanelOpen,
     rightPanelDocType: store.rightPanelDocType,

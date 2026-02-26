@@ -219,11 +219,9 @@ export default function RightPanel() {
 
   if (!rightPanelOpen) return null;
 
-  const isStreaming =
-    phase === "tool_call_start" || phase === "tool_call_streaming";
+  const isStreaming = false; // JSON 방식에서는 실시간 스트리밍 없음
   const isComplete =
     phase === "tool_call_complete" ||
-    phase === "phase2_streaming" ||
     phase === "complete";
 
   const docArgs = editedArgs ?? toolCall?.completedArgs ?? {};
@@ -334,7 +332,7 @@ export default function RightPanel() {
               {editMode
                 ? "편집 모드 — 필드를 클릭하여 수정"
                 : isStreaming
-                ? `AI 작성 중... ${toolCall?.partialParsed?.progress ?? 0}%`
+                ? "AI 작성 중..."
                 : isComplete
                 ? "생성 완료"
                 : "준비 중..."}
@@ -348,7 +346,7 @@ export default function RightPanel() {
             <div
               className="h-full bg-blue-500 rounded-full transition-all duration-300 ease-out"
               style={{
-                width: `${Math.max(toolCall?.partialParsed?.progress ?? 0, 5)}%`,
+                width: `${toolCall?.isComplete ? 100 : 5}%`,
               }}
             />
           </div>
@@ -509,8 +507,8 @@ function DocRenderer({
     if (editedArgs) return editedArgs;
     if (toolCall.isComplete && toolCall.completedArgs)
       return toolCall.completedArgs;
-    return (toolCall.partialParsed?.parsed as Record<string, unknown>) ?? null;
-  }, [toolCall.isComplete, toolCall.completedArgs, toolCall.partialParsed, editedArgs]);
+    return null;
+  }, [toolCall.isComplete, toolCall.completedArgs, editedArgs]);
 
   if (!data) return <FullSkeleton />;
 

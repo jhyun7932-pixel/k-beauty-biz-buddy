@@ -18,19 +18,19 @@ export type ResponseContext =
   | "EMAIL_COMPLETE"
   | "GENERAL_RESPONSE";
 
-/** toolCall 정보 + phase2 텍스트로 응답 컨텍스트 추론 */
+/** toolCall 정보 + 응답 텍스트로 응답 컨텍스트 추론 */
 export function detectResponseContext(
   toolCallName?: string,
   docType?: string | null,
   completedArgs?: Record<string, unknown> | null,
-  phase2Text?: string,
+  responseText?: string,
 ): ResponseContext {
   if (toolCallName === "check_compliance") {
     const overall = completedArgs?.overall_status as string | undefined;
     return overall === "PASS" ? "COMPLIANCE_PASS" : "COMPLIANCE_FAIL";
   }
 
-  if (toolCallName === "generate_trade_document") {
+  if (toolCallName === "generate_document" || toolCallName === "generate_trade_document") {
     const dt = (completedArgs?.document_type as string) || docType;
     switch (dt) {
       case "PI": return "PI_COMPLETE";
@@ -41,8 +41,8 @@ export function detectResponseContext(
     }
   }
 
-  // 이메일 감지: phase2 텍스트에 이메일 키워드 + 문서 생성 아닌 경우
-  if (phase2Text && /이메일|email|메일/i.test(phase2Text) && !toolCallName) {
+  // 이메일 감지: 응답 텍스트에 이메일 키워드 + 문서 생성 아닌 경우
+  if (responseText && /이메일|email|메일/i.test(responseText) && !toolCallName) {
     return "EMAIL_COMPLETE";
   }
 

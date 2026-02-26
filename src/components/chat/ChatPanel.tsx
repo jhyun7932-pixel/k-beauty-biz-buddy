@@ -22,7 +22,6 @@ interface ChatMessage {
 interface ChatPanelProps {
   messages: ChatMessage[];
   currentStreamingText: string;
-  currentPhase2Text: string;
   isStreaming: boolean;
   phase: string;
   error: string | null;
@@ -35,7 +34,6 @@ interface ChatPanelProps {
 export default function ChatPanel({
   messages,
   currentStreamingText,
-  currentPhase2Text,
   isStreaming,
   phase,
   error,
@@ -70,7 +68,7 @@ export default function ChatPanel({
   // 자동 스크롤
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, currentStreamingText, currentPhase2Text]);
+  }, [messages, currentStreamingText]);
 
   const handleSubmit = (e?: FormEvent) => {
     e?.preventDefault();
@@ -138,10 +136,7 @@ export default function ChatPanel({
   const phaseLabels: Record<string, string> = {
     connecting: "연결 중...",
     streaming_text: "응답 생성 중...",
-    tool_call_start: "문서 생성 시작...",
-    tool_call_streaming: "문서 작성 중...",
     tool_call_complete: "문서 완료 ✓",
-    phase2_streaming: "확인 메시지...",
   };
 
   return (
@@ -240,26 +235,9 @@ export default function ChatPanel({
           </div>
         )}
 
-        {/* Phase 2 스트리밍 텍스트 */}
-        {currentPhase2Text && (
-          <div className="flex gap-2.5">
-            <AIAvatar />
-            <div className="flex-1 bg-white rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm border border-gray-100 max-w-[80%]">
-              <div className="text-sm text-gray-800">
-                <MarkdownContent content={currentPhase2Text} />
-                {phase === "phase2_streaming" && (
-                  <span className="inline-block w-[2px] h-4 bg-violet-500 ml-0.5 animate-pulse" />
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Thinking 인디케이터 */}
         {isStreaming &&
-          !currentStreamingText &&
-          !currentPhase2Text &&
-          phase !== "tool_call_streaming" && (
+          !currentStreamingText && (
             <div className="flex gap-2.5">
               <AIAvatar />
               <div className="bg-white rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm border border-gray-100">
@@ -279,7 +257,9 @@ export default function ChatPanel({
         {/* 에러 */}
         {error && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
-            <strong>안내:</strong> {error}
+            <strong>안내:</strong> {error.split("\n").map((line, i) => (
+              <span key={i}>{i > 0 && <br />}{line}</span>
+            ))}
           </div>
         )}
 
