@@ -1,17 +1,8 @@
-// FLONIX Streaming Store (Zustand)
-// 좌측 채팅 ↔ 우측 문서 패널 동기화 (Claude JSON 응답 방식)
+// streamingStore → tradeStore 호환 어댑터
+// RightPanel.tsx 등 기존 컴포넌트가 이 파일을 import하므로 유지
 
-import { create } from "zustand";
-import type { NextAction } from "../lib/nextActions";
-import { detectResponseContext, getNextActions } from "../lib/nextActions";
-
-export type StreamPhase =
-  | "idle"
-  | "connecting"
-  | "streaming_text"
-  | "tool_call_complete"
-  | "complete"
-  | "error";
+import { useTradeStore } from "./tradeStore";
+export type { StreamPhase } from "./tradeStore";
 
 export type DocumentType = "PI" | "CI" | "PL" | "NDA" | "SALES_CONTRACT" | "PROPOSAL" | "COMPLIANCE" | null;
 
@@ -21,168 +12,50 @@ export interface ToolCallInfo {
   completedArgs: Record<string, unknown> | null;
 }
 
-export interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: number;
-  toolCall?: { name: string; documentType: DocumentType };
-  nextActions?: NextAction[];
-}
-
-interface StreamingState {
-  phase: StreamPhase;
-  isStreaming: boolean;
-  messages: ChatMessage[];
-  currentStreamingText: string;
-  toolCall: ToolCallInfo | null;
-  rightPanelOpen: boolean;
-  rightPanelDocType: DocumentType;
-  error: string | null;
-
-  startStreaming: () => void;
-  appendTextDelta: (text: string) => void;
-  startToolCall: (name: string) => void;
-  completeToolCall: (fullArgs: string) => void;
-  completeStreaming: () => void;
-  setError: (err: string) => void;
-  addUserMessage: (content: string) => void;
-  reset: () => void;
-  closeRightPanel: () => void;
-  toggleRightPanel: () => void;
-}
-
-function fnToDocType(name: string): DocumentType {
-  if (name === "generate_document") return "PI";
+function toolNameToDocType(name: string | null, doc: any): DocumentType {
+  if (!name) return null;
   if (name === "check_compliance") return "COMPLIANCE";
+  if (name === "generate_trade_document" || name === "generate_document") {
+    const dt = doc?.document_type;
+    if (dt && ["PI", "CI", "PL", "NDA", "SALES_CONTRACT", "PROPOSAL"].includes(dt)) return dt as DocumentType;
+    return "PI";
+  }
   return "PI";
 }
 
-function argsToDocType(args: Record<string, unknown> | null): DocumentType {
-  if (!args) return null;
-  const dt = args.document_type as string | undefined;
-  if (dt && ["PI", "CI", "PL", "NDA", "SALES_CONTRACT", "PROPOSAL"].includes(dt)) return dt as DocumentType;
-  return null;
+export function useStreamingStore() {
+  const store = useTradeStore();
+
+  const isComplete = store.streamPhase === "tool_call_complete" || store.streamPhase === "complete";
+
+  const toolCall: ToolCallInfo | null =
+    store.currentDocument || store.complianceResult || store.activeToolName
+      ? {
+          name: store.activeToolName || (store.complianceResult ? "check_compliance" : "generate_trade_document"),
+          isComplete,
+          completedArgs: store.currentDocument
+            ? (store.currentDocument as unknown as Record<string, unknown>)
+            : store.complianceResult
+            ? (store.complianceResult as unknown as Record<string, unknown>)
+            : null,
+        }
+      : null;
+
+  const rightPanelDocType = toolNameToDocType(
+    toolCall?.name ?? null,
+    store.currentDocument,
+  );
+
+  return {
+    phase: store.streamPhase,
+    isStreaming: ["connecting", "streaming_text", "tool_call_start", "tool_call_streaming"].includes(store.streamPhase),
+    messages: store.messages,
+    currentStreamingText: store.streamingText,
+    toolCall,
+    rightPanelOpen: store.rightPanelOpen,
+    rightPanelDocType,
+    error: store.errorMessage,
+    closeRightPanel: () => useTradeStore.setState({ rightPanelOpen: false }),
+    toggleRightPanel: () => useTradeStore.setState((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
+  };
 }
-
-export const useStreamingStore = create<StreamingState>((set, get) => ({
-  phase: "idle",
-  isStreaming: false,
-  messages: [],
-  currentStreamingText: "",
-  toolCall: null,
-  rightPanelOpen: false,
-  rightPanelDocType: null,
-  error: null,
-
-  startStreaming: () =>
-    set({
-      phase: "connecting",
-      isStreaming: true,
-      currentStreamingText: "",
-      toolCall: null,
-      error: null,
-    }),
-
-  appendTextDelta: (text) =>
-    set((s) => ({
-      phase: "streaming_text",
-      currentStreamingText: s.currentStreamingText + text,
-    })),
-
-  startToolCall: (name) =>
-    set({
-      phase: "tool_call_complete",
-      toolCall: {
-        name,
-        isComplete: false,
-        completedArgs: null,
-      },
-      rightPanelOpen: true,
-      rightPanelDocType: fnToDocType(name),
-    }),
-
-  completeToolCall: (fullArgs) =>
-    set((s) => {
-      if (!s.toolCall) return s;
-      let parsed: Record<string, unknown> | null = null;
-      try {
-        parsed = JSON.parse(fullArgs);
-      } catch {
-        parsed = null;
-      }
-      return {
-        phase: "tool_call_complete",
-        toolCall: {
-          ...s.toolCall,
-          isComplete: true,
-          completedArgs: parsed,
-        },
-        rightPanelDocType: argsToDocType(parsed) || s.rightPanelDocType,
-      };
-    }),
-
-  completeStreaming: () => {
-    const s = get();
-    const newMsgs = [...s.messages];
-
-    // NextAction 컨텍스트 감지
-    const context = detectResponseContext(
-      s.toolCall?.name,
-      s.rightPanelDocType,
-      s.toolCall?.completedArgs,
-      "",
-    );
-    const actions = getNextActions(context);
-
-    if (s.currentStreamingText.trim()) {
-      newMsgs.push({
-        id: `msg-${Date.now()}-t`,
-        role: "assistant",
-        content: s.currentStreamingText,
-        timestamp: Date.now(),
-        toolCall: s.toolCall
-          ? { name: s.toolCall.name, documentType: s.rightPanelDocType }
-          : undefined,
-        nextActions: actions.length > 0 ? actions : undefined,
-      });
-    }
-
-    set({
-      phase: "complete",
-      isStreaming: false,
-      messages: newMsgs,
-      currentStreamingText: "",
-    });
-  },
-
-  setError: (err) =>
-    set({ phase: "error", isStreaming: false, error: err }),
-
-  addUserMessage: (content) =>
-    set((s) => ({
-      messages: [
-        ...s.messages,
-        {
-          id: `msg-${Date.now()}-u`,
-          role: "user",
-          content,
-          timestamp: Date.now(),
-        },
-      ],
-    })),
-
-  reset: () =>
-    set({
-      phase: "idle",
-      isStreaming: false,
-      currentStreamingText: "",
-      toolCall: null,
-      rightPanelOpen: false,
-      rightPanelDocType: null,
-      error: null,
-    }),
-
-  closeRightPanel: () => set({ rightPanelOpen: false }),
-  toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
-}));
