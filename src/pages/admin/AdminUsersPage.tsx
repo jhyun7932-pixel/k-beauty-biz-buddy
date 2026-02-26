@@ -56,10 +56,12 @@ export default function AdminUsersPage() {
         .order('created_at', { ascending: false });
       if (pErr) throw pErr;
 
-      // Fetch all roles
+      // Fetch all roles (RLS 오류 시 빈 배열로 fallback)
       const { data: roles } = await supabase
         .from('user_roles')
-        .select('user_id, role');
+        .select('user_id, role')
+        .then(res => res)
+        .catch(() => ({ data: null, error: null }));
       const roleMap = new Map((roles ?? []).map((r: any) => [r.user_id, r.role as 'admin' | 'user']));
 
       // Fetch company names
@@ -94,8 +96,8 @@ export default function AdminUsersPage() {
     setRoleChangeTarget(null);
 
     try {
-      // Delete existing role first
-      await supabase.from('user_roles').delete().eq('user_id', user.user_id);
+      // Delete existing role first (RLS 오류 시 무시 — Edge Function에서 처리)
+      await supabase.from('user_roles').delete().eq('user_id', user.user_id).catch(() => {});
 
       // Insert new role — uses service role via edge function to bypass "Deny direct role inserts" RLS
       const { data: session } = await supabase.auth.getSession();

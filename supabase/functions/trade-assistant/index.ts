@@ -80,38 +80,43 @@ const tools: Anthropic.Tool[] = [
 // DB 조회 함수
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async function fetchUserContext(supabaseClient: any, userId: string) {
-  const [companiesRes, buyersRes, productsRes] = await Promise.all([
-    supabaseClient.from("companies").select("*").eq("user_id", userId).maybeSingle(),
-    supabaseClient.from("buyers").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
-    supabaseClient.from("products").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
-  ]);
+  try {
+    const [companiesRes, buyersRes, productsRes] = await Promise.all([
+      supabaseClient.from("companies").select("*").eq("user_id", userId).maybeSingle(),
+      supabaseClient.from("buyers").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+      supabaseClient.from("products").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+    ]);
 
-  const co = companiesRes.data;
+    // user_roles는 절대 조회하지 않음 (RLS 재귀 위험)
+    const co = companiesRes.data;
 
-  return {
-    seller: co
-      ? {
-          company_name: co.company_name || null,
-          company_name_ko: co.company_name_ko || null,
-          representative: co.representative || null,
-          address: co.address || null,
-          phone: co.phone || null,
-          email: co.email || null,
-          website: co.website || null,
-          export_countries: co.export_countries || [],
-          certifications: co.certifications || [],
-          contact_name: co.contact_name || null,
-          contact_title: co.contact_title || null,
-          contact_phone: co.contact_phone || null,
-          contact_email: co.contact_email || null,
-          email_signature: co.email_signature || null,
-          logo_url: co.logo_url || null,
-          bank_info: co.bank_info || null,
-        }
-      : null,
-    buyers: buyersRes.data || [],
-    products: productsRes.data || [],
-  };
+    return {
+      seller: co ? {
+        company_name: co.company_name || null,
+        company_name_ko: co.company_name_ko || null,
+        representative: co.representative || null,
+        address: co.address || null,
+        phone: co.phone || null,
+        email: co.email || null,
+        website: co.website || null,
+        export_countries: co.export_countries || [],
+        certifications: co.certifications || [],
+        contact_name: co.contact_name || null,
+        contact_title: co.contact_title || null,
+        contact_phone: co.contact_phone || null,
+        contact_email: co.contact_email || null,
+        email_signature: co.email_signature || null,
+        logo_url: co.logo_url || null,
+        bank_info: co.bank_info || null,
+      } : null,
+      buyers: buyersRes.data || [],
+      products: productsRes.data || [],
+    };
+  } catch (dbError: any) {
+    console.error("[FLONIX] fetchUserContext DB error:", dbError.message);
+    // DB 오류 시 빈 컨텍스트 반환 (AI는 계속 동작)
+    return { seller: null, buyers: [], products: [] };
+  }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
