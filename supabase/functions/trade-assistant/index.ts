@@ -87,38 +87,42 @@ async function fetchUserContext(supabaseClient: any, userId: string) {
         .eq("user_id", userId)
         .maybeSingle(),
 
+      // buyers: 실제 DB 컬럼에 맞춤
       supabaseClient
         .from("buyers")
         .select([
           "id",
           "company_name",
           "contact_name",
-          "contact_title",
-          "email",
+          "contact_email",
+          "contact_phone",
           "country",
-          "address",
+          "website",
+          "buyer_type",
+          "channel",
           "payment_terms",
-          "incoterms",
-          "currency"
+          "currency",
+          "status_stage"
         ].join(","))
         .eq("user_id", userId)
         .order("updated_at", { ascending: false })
         .limit(10),
 
-      // ⚡ ingredients 완전 제외 - 토큰 주범
+      // products: 실제 DB 컬럼에 맞춤 (ingredients 완전 제외)
       supabaseClient
         .from("products")
         .select([
           "id",
           "name",
-          "name_ko",
-          "hs_code",
-          "unit_price",
-          "unit",
+          "name_en",
           "category",
-          "net_weight",
-          "gross_weight",
-          "cbm"
+          "sku_code",
+          "hs_code",
+          "hs_code_candidate",
+          "size_ml_g",
+          "moq",
+          "unit_price_range",
+          "status"
         ].join(","))
         .eq("user_id", userId)
         .order("updated_at", { ascending: false })
@@ -128,6 +132,19 @@ async function fetchUserContext(supabaseClient: any, userId: string) {
     const co = companiesRes.data;
 
     // 토큰 사용량 사전 검증
+    // products 정규화: DB 컬럼명 → AI가 이해하기 쉬운 필드명
+    const normalizedProducts = (productsRes.data || []).map((p: any) => ({
+      id: p.id,
+      name: p.name || p.name_en || null,
+      category: p.category || null,
+      sku_code: p.sku_code || null,
+      hs_code: p.hs_code || p.hs_code_candidate || null,
+      unit_price: p.unit_price_range?.base ?? null,
+      size_ml_g: p.size_ml_g ?? null,
+      moq: p.moq ?? null,
+      status: p.status || null,
+    }));
+
     const ctx = {
       seller: co ? {
         company_name: co.company_name || null,
@@ -147,7 +164,7 @@ async function fetchUserContext(supabaseClient: any, userId: string) {
         bank_info: co.bank_info || null,
       } : null,
       buyers: buyersRes.data || [],
-      products: productsRes.data || [],
+      products: normalizedProducts,
     };
 
     // 토큰 추정 및 로깅
