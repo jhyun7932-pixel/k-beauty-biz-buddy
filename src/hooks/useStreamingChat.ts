@@ -59,8 +59,8 @@ export function useStreamingChat() {
           }
         }
 
-        // 히스토리 (최근 20개)
-        const history = store.messages.slice(-20).map((m) => ({
+        // 히스토리 (최근 10개 — 토큰 초과 방지)
+        const history = store.messages.slice(-10).map((m) => ({
           role: m.role,
           content: m.content,
         }));

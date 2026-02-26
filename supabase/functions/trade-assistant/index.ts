@@ -45,42 +45,23 @@ async function fetchUserContextCached(
   return data as unknown as Record<string, unknown>;
 }
 
-const SYSTEM_PROMPT = `You are FLONIX AI, a specialized trade assistant for K-Beauty export operations.
-You assist Korean beauty SMEs with international trade documentation, compliance, and logistics.
+const SYSTEM_PROMPT = `You are FLONIX AI, a K-Beauty export trade assistant.
 
-=== CRITICAL RULES (MUST FOLLOW ALWAYS) ===
+CRITICAL RULES:
+1. Always call get_user_context tool FIRST before generating documents.
+2. If seller data is null: tell user to save company info in Settings page. Do NOT generate document.
+3. Never fabricate seller/buyer/product data.
+4. Respond to user in Korean. Write all trade documents in English.
+5. Use generate_trade_document tool for all document output.
+6. Country of Origin is always "Republic of Korea". Currency: USD. Terms: Incoterms 2020.
 
-RULE 1 - DATA USAGE:
-- ALWAYS call get_user_context tool FIRST before generating any document.
-- If seller is null or seller.company_name is null: respond in Korean asking user to save company info in Settings page first. Do NOT generate the document.
-- NEVER fabricate seller information. Use ONLY exact data from get_user_context.
-- Buyers and products: match by name from context data.
+DOCUMENT RULES (apply when generating):
+- PI: doc number, seller block, buyer block, items table (HS Code, COO, qty, unit price, amount), incoterms, payment terms, bank info, T&C 4 clauses, signature block, SAY USD ONLY line
+- CI: same as PI + B/L No field + certification statement + net/gross weight columns
+- PL: carton table (qty/carton, cartons, total qty, NW, GW, CBM, batch no), shipping mark, cargo summary
+- EMAIL: subject line, Dear Ms/Mr [name], body, CTA with deadline, Best regards + signature
 
-RULE 2 - DOCUMENT GENERATION:
-- All documents use auto-generated document numbers (TYPE-YYYYMMDD-NNN).
-- Country of Origin is always "Republic of Korea".
-- Currency is always "USD" unless buyer specifies otherwise.
-- All trade terms use Incoterms 2020.
-
-RULE 3 - LANGUAGE:
-- Respond to user in Korean.
-- All trade documents (PI/CI/PL/NDA) must be written in English.
-- Email drafts: English body, subject in English.
-
-RULE 4 - RESPONSE FORMAT:
-- After generating a document, call generate_trade_document tool with the complete structured data.
-- Do not show raw JSON or markdown tables in chat. Use generate_trade_document tool for all documents.
-- Keep chat responses concise. Let the document panel show the details.
-
-RULE 5 - IMAGE/PDF ANALYSIS:
-- When image/PDF is attached, analyze content first and explain results in detail.
-- INCI list image: extract all ingredient names, present in table, call check_compliance if target country specified.
-- Trade document image: identify type, extract key fields, point out missing/errors.
-
-RULE 6 - COMPLIANCE:
-- compliance_results must include per-ingredient results with inci_name, status(PASS/FAIL/CAUTION), regulation, action_item.
-- FAIL action_items: suggest specific alternative ingredients, dosage limits, labeling fixes, or certifications needed.
-- Never suggest irrelevant actions like "draft an email" for compliance issues.`;
+IMAGE/PDF: analyze content, extract key fields, explain in Korean. INCI list: extract ingredients, call check_compliance if country specified.`;
 
 const SYSTEM_PROMPT_FAST = `당신은 FLONIX AI 무역 어시스턴트입니다. K-뷰티 수출 전문가로서 간결하고 실무적으로 답변하세요.
 - 한국어 우선, 구조화된 답변
@@ -447,8 +428,17 @@ Deno.serve(async (req) => {
     const selectedModel = hasFiles ? GEMINI_MODEL_PRO : autoModel;
     const selectedPrompt = selectedModel === GEMINI_MODEL_FAST ? SYSTEM_PROMPT_FAST : SYSTEM_PROMPT;
 
+    // 대화 히스토리 토큰 제한 (이미지 첨부 시 더 짧게)
+    const MAX_HISTORY_WITH_IMAGE = 3;
+    const MAX_HISTORY_TEXT_ONLY = 10;
+    const maxHistory = hasFiles ? MAX_HISTORY_WITH_IMAGE : MAX_HISTORY_TEXT_ONLY;
+    const allHistory = (history as Array<{ role: string; content: string }>);
+    const trimmedHistory = allHistory.length > maxHistory
+      ? [allHistory[0], ...allHistory.slice(-maxHistory + 1)]
+      : allHistory;
+
     // Gemini 메시지 포맷
-    const gHist = history.map((m: { role: string; content: string }) => ({
+    const gHist = trimmedHistory.map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
     }));
@@ -509,12 +499,15 @@ Deno.serve(async (req) => {
 
               if (r1.status === 503 || r1.status === 429) {
                 userMessage = "AI 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해주세요.";
-              } else if (r1.status === 400 && (errText.includes("INVALID_ARGUMENT") || errText.includes("token"))) {
-                userMessage = "요청 처리 중 오류가 발생했습니다. 메시지를 짧게 나눠서 다시 시도해주세요.";
+              } else if (r1.status === 400 && (errText.includes("INVALID_ARGUMENT") || errText.includes("token") || errText.includes("1048576"))) {
+                userMessage = "대화 내용이 너무 길어졌습니다. 새 대화를 시작하거나 메시지를 간결하게 작성해주세요.";
                 errCode = "TOKEN_LIMIT";
-              } else if (r1.status === 400 && (errText.includes("base64") || errText.includes("decode"))) {
-                userMessage = "파일 처리 중 오류가 발생했습니다. JPG/PNG/PDF 파일을 다시 업로드해주세요.";
+              } else if (r1.status === 400 && (errText.includes("base64") || errText.includes("decode") || errText.includes("inline_data"))) {
+                userMessage = "파일 처리 오류입니다. 이미지를 JPG/PNG로 변환 후 다시 업로드해주세요.";
                 errCode = "BASE64_ERROR";
+              } else if (errText.includes("SAFETY")) {
+                userMessage = "콘텐츠 안전 정책으로 처리할 수 없습니다. 내용을 수정 후 다시 시도해주세요.";
+                errCode = "SAFETY";
               } else {
                 userMessage = `AI 서비스 일시적 오류입니다. 잠시 후 다시 시도해주세요. (오류코드: ${r1.status})`;
               }
@@ -685,14 +678,17 @@ Deno.serve(async (req) => {
           let userMessage: string;
           let errCode = "INTERNAL";
 
-          if (errMsg.includes("token") || errMsg.includes("INVALID_ARGUMENT")) {
-            userMessage = "요청 처리 중 오류가 발생했습니다. 메시지를 짧게 나눠서 다시 시도해주세요.";
+          if (errMsg.includes("token") || errMsg.includes("INVALID_ARGUMENT") || errMsg.includes("1048576")) {
+            userMessage = "대화 내용이 너무 길어졌습니다. 새 대화를 시작하거나 메시지를 간결하게 작성해주세요.";
             errCode = "TOKEN_LIMIT";
-          } else if (errMsg.includes("base64") || errMsg.includes("decode")) {
-            userMessage = "파일 처리 중 오류가 발생했습니다. JPG/PNG/PDF 파일을 다시 업로드해주세요.";
+          } else if (errMsg.includes("base64") || errMsg.includes("decode") || errMsg.includes("inline_data")) {
+            userMessage = "파일 처리 오류입니다. 이미지를 JPG/PNG로 변환 후 다시 업로드해주세요.";
             errCode = "BASE64_ERROR";
+          } else if (errMsg.includes("SAFETY")) {
+            userMessage = "콘텐츠 안전 정책으로 처리할 수 없습니다. 내용을 수정 후 다시 시도해주세요.";
+            errCode = "SAFETY";
           } else {
-            userMessage = `AI 서비스 일시적 오류입니다. 잠시 후 다시 시도해주세요. (오류코드: ${errCode})`;
+            userMessage = "AI 서비스 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
           }
           console.error("[trade-assistant] Stream error:", errMsg);
           push({ type: "error", data: { error: true, message: userMessage, code: errCode } });
