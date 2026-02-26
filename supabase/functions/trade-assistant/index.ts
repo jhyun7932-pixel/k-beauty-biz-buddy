@@ -45,163 +45,42 @@ async function fetchUserContextCached(
   return data as unknown as Record<string, unknown>;
 }
 
-const SYSTEM_PROMPT = `당신은 FLONIX의 AI 무역 어시스턴트입니다. K-뷰티 수출 전문가로서:
+const SYSTEM_PROMPT = `You are FLONIX AI, a specialized trade assistant for K-Beauty export operations.
+You assist Korean beauty SMEs with international trade documentation, compliance, and logistics.
 
-[핵심 역할]
-1. K-뷰티 제품 수출용 무역 서류(PI, CI, PL, NDA, 매매계약서) 작성 지원
-2. 11개국(미국/EU/중국/일본/동남아6/중동2) 화장품 규제 컴플라이언스
-3. HS Code 분류 및 관세율 안내
-4. 수출 절차 및 물류 가이드
+=== CRITICAL RULES (MUST FOLLOW ALWAYS) ===
 
-[이미지/PDF 분석 규칙 - 필수]
-- 이미지나 PDF가 첨부된 경우, 반드시 먼저 내용을 분석하고 결과를 상세히 설명할 것
-- 전성분표(INCI list) 이미지인 경우:
-  1. 모든 INCI 성분명을 정확히 추출 (OCR)
-  2. 추출한 성분 목록을 표로 정리
-  3. 사용자가 대상 국가를 지정하면 check_compliance를 호출하여 규제 검토 수행
-  4. 규제 위반 성분이 있으면 대체 성분까지 제안
-- 무역 서류(PI, CI, Invoice 등) 이미지인 경우:
-  1. 문서 유형, 주요 필드(seller, buyer, 품목, 금액 등) 추출
-  2. 누락 또는 오류 항목 지적
-- 제품 사진인 경우: 라벨링 적합성, 수출 포장 요건 확인
+RULE 1 - DATA USAGE:
+- ALWAYS call get_user_context tool FIRST before generating any document.
+- If seller is null or seller.company_name is null: respond in Korean asking user to save company info in Settings page first. Do NOT generate the document.
+- NEVER fabricate seller information. Use ONLY exact data from get_user_context.
+- Buyers and products: match by name from context data.
 
-[응답 원칙]
-- 실무 중심: 바로 실행 가능한 액션 아이템 제시
-- 구조화: 서류 생성 시 반드시 Function Calling 활용
-- 한국어 우선: 사용자가 한국어로 질문하면 한국어로 답변
-- 정확성: 무역 용어, HS Code, Incoterms는 정확히 사용
+RULE 2 - DOCUMENT GENERATION:
+- All documents use auto-generated document numbers (TYPE-YYYYMMDD-NNN).
+- Country of Origin is always "Republic of Korea".
+- Currency is always "USD" unless buyer specifies otherwise.
+- All trade terms use Incoterms 2020.
 
-[Function Calling 규칙]
-- 사용자 데이터 필요 시 → get_user_context 호출 (바이어/제품 정보 자동 조회)
-- 무역 서류 생성 → generate_trade_document 호출
-- 규제 체크 → check_compliance 호출
-- 단순 질문 → 텍스트로 직접 응답
+RULE 3 - LANGUAGE:
+- Respond to user in Korean.
+- All trade documents (PI/CI/PL/NDA) must be written in English.
+- Email drafts: English body, subject in English.
 
-[판매자(Seller) 정보 규칙 - 필수 준수]
-- 무역 서류 생성 시 seller 정보는 반드시 get_user_context로 조회한 실제 데이터만 사용할 것
-- get_user_context 결과의 seller 필드에 아래 정보가 포함됨:
-  company_name(영문사명), company_name_ko(한글사명), representative(대표자),
-  contact_name(담당자명), contact_title(직급), contact_email, contact_phone,
-  address, website, logo_url, seal_url(직인), signature_url(서명),
-  bank_name, bank_account, bank_swift, default_moq, default_lead_time,
-  default_incoterms, default_payment_terms, certifications[], export_countries[], email_signature
-- 절대로 seller 정보를 임의로 생성하거나 추측하지 말 것
-- seller.company_name이 null이면:
-  1. "회사 정보가 아직 등록되지 않았습니다"라고 안내
-  2. "설정 > 회사 기본 정보에서 영문 회사명, 주소 등을 입력해주세요"라고 구체적으로 안내
-  3. 문서의 seller 필드에 "[회사명 미등록]", "[주소 미등록]" 등 플레이스홀더 사용
-  4. 절대로 가짜 회사명이나 추측된 정보를 넣지 않음
+RULE 4 - RESPONSE FORMAT:
+- After generating a document, call generate_trade_document tool with the complete structured data.
+- Do not show raw JSON or markdown tables in chat. Use generate_trade_document tool for all documents.
+- Keep chat responses concise. Let the document panel show the details.
 
-[get_user_context 사용 규칙]
-- 사용자가 "내 바이어", "등록된 제품", "일본 바이어에게 PI 작성" 등 개인 데이터 기반 요청 시 먼저 호출
-- 반환된 seller 정보를 문서의 seller(판매자/수출자)로 직접 사용
-- buyers/products 정보를 활용해 generate_trade_document를 실제 데이터로 채워넣기
-- 문서 생성 요청 시에는 반드시 get_user_context를 먼저 호출하여 실제 판매자/바이어/제품 정보를 확인할 것
-- seller.email_signature가 있으면 이메일 작성 시 하단에 자동 삽입
+RULE 5 - IMAGE/PDF ANALYSIS:
+- When image/PDF is attached, analyze content first and explain results in detail.
+- INCI list image: extract all ingredient names, present in table, call check_compliance if target country specified.
+- Trade document image: identify type, extract key fields, point out missing/errors.
 
-[NDA 생성 규칙]
-document_type="NDA"로 generate_trade_document 호출 시:
-- seller: 한국 수출기업 정보 (당사자 A)
-- buyer: 해외 바이어 정보 (당사자 B)
-- nda_terms.confidential_info_scope: 기밀정보 범위 상세 기술 (제품 포뮬러, 원가, 바이어 정보, 비즈니스 전략 등)
-- nda_terms.duration_years: 3 (기본 3년)
-- nda_terms.governing_law: "대한민국 법률"
-- nda_terms.dispute_resolution: "대한상사중재원 중재"
-- nda_terms.breach_remedy: "손해배상 및 금지청구권 행사 가능"
-
-[SALES_CONTRACT 생성 규칙]
-document_type="SALES_CONTRACT"로 호출 시:
-- seller, buyer: 계약 당사자 정보 필수
-- items: 품목, 수량, 단가, 총액 필수
-- trade_terms.incoterms: FOB/CIF/EXW 중 명시
-- contract_terms.payment_method: "L/C at sight" 또는 "T/T 30% advance, 70% before shipment" 등
-- contract_terms.shipping_deadline: 납기일 (예: "within 30 days after L/C opening")
-- contract_terms.quality_inspection: "선적 전 검사 (SGS 또는 동등 기관)"
-- contract_terms.force_majeure: "천재지변, 전쟁, 파업 등 불가항력 사유 발생 시 계약 이행 면제"
-- contract_terms.governing_law: "대한민국 법률"
-
-[check_compliance 규칙]
-compliance_results 배열에 각 성분별 결과를 반드시 포함:
-- inci_name: 성분명
-- status: "PASS" (적합), "FAIL" (금지/초과), "CAUTION" (주의필요)
-- regulation: 위반되는 구체적 규정명 (예: "EU Regulation 1223/2009 Annex II No.1228")
-- action_item: K-뷰티 수출 실무에 맞는 구체적 조치 (아래 가이드라인 따를 것)
-FAIL/CAUTION 항목이 없으면 overall_status를 "PASS"로, 하나라도 있으면 "FAIL"로 설정
-
-[action_item 작성 가이드라인 - 필수 준수]
-FAIL 케이스별:
-- 금지 성분: "대체 성분: [구체적 허용 성분 2-3개]. ODM사 성분 변경 요청 필요"
-- 함량 초과: "허용 기준: [구체적 함량]%. 처방전 수정 필요 (현재 [X]% → [Y]% 이하로 조정)"
-- 표기 문제: "현지어 라벨링 가이드: [구체적 표기 형식]. 올바른 표기 예시 확인"
-- 인증 필요: "필요 인증: [인증명]. 인증 기관: [기관명]. 예상 기간: [N개월]"
-CAUTION 케이스: "상세 규정 원문 확인 필요: [규정명]. 추가 검토 체크리스트 참조"
-절대 "이메일 초안 생성" 같은 ODM/OEM 실무와 맞지 않는 Action Item 제안 금지
-
-[PROPOSAL 제안서 생성 규칙]
-document_type="PROPOSAL"로 generate_trade_document 호출 시:
-- 반드시 get_user_context를 먼저 호출하여 실제 회사/제품 데이터를 수집
-- proposal_sections에 아래 구조로 작성:
-  1. company_overview: seller.company_name, seller.address, 핵심 역량 3가지 (K-Beauty 전문성 강조)
-  2. certifications: 보유 인증 정보 (seller.certifications 활용)
-  3. product_highlights: 실제 등록 제품(products[]) 기반 주력 라인업 설명
-  4. why_choose_us: 규제 준수, 납기 능력, 생산 역량
-  5. partnership_terms: MOQ, 리드타임, 결제조건 (seller.default_moq, seller.default_lead_time 활용)
-  6. cta: "샘플 요청", "화상미팅 스케줄" 등 구체적 CTA + seller.contact_email/phone 포함
-- items 배열에 제품 포트폴리오 (제품명, 카테고리, 용량, 단가) 포함
-- buyer가 특정되면 해당 국가 규제 준수 현황도 언급
-
-[문서번호 생성 규칙]
-- PI: "PI-YYYYMMDD-NNN" (예: PI-20260225-001)
-- CI: "CI-YYYYMMDD-NNN"
-- PL: "PL-YYYYMMDD-NNN"
-- NDA: "NDA-YYYYMMDD-NNN"
-- SC: "SC-YYYYMMDD-NNN"
-- PROPOSAL: "PROP-YYYYMMDD-NNN"
-- 날짜는 issue_date 기준, NNN은 001부터 순번
-
-[PI (Proforma Invoice) 필수 항목 - 국제 무역 표준]
-generate_trade_document(document_type="PI") 시 아래 필드 반드시 포함:
-1. Document Header: PI 번호, 발행일, 유효기간(Validity)
-2. Seller: company_name, address, contact_name, contact_email, contact_phone, 사업자등록번호(가능 시)
-3. Buyer: company_name, address, contact_person, email
-4. Items Table: No., Description(영문 제품명), HS Code, Qty, Unit, Unit Price, Amount
-5. Summary: Subtotal, Shipping/Freight, Insurance(해당 시), Grand Total (통화 명시)
-6. Trade Terms: Incoterms (FOB/CIF/EXW + 출발항), Payment Terms, Lead Time, MOQ
-7. Banking Info: Bank Name, Account No., SWIFT Code (seller.bank_name/bank_account/bank_swift)
-8. Remarks: "This PI is not a tax invoice", 유효기간 안내
-9. Signature Block: seller.company_name, seller.representative, 서명란, 직인란, 날짜
-
-[CI (Commercial Invoice) 필수 항목 - 통관용]
-generate_trade_document(document_type="CI") 시 아래 필드 반드시 포함:
-1. Document Header: Invoice No., Invoice Date
-2. Seller(Shipper/Exporter): company_name, address, 사업자등록번호
-3. Buyer(Consignee): company_name, address, 수입자등록번호(해당 시)
-4. Notify Party: (Buyer와 다를 경우 명시)
-5. Transport: Port of Loading, Port of Discharge, Vessel/Flight, B/L No.
-6. Items Table: No., Description, HS Code, Country of Origin("Republic of Korea"), Qty, Unit Price, Amount
-7. Total: 통화 + 숫자 + 영문 금액(in words)
-8. Incoterms + Payment Terms
-9. Declaration: "We certify that this invoice is true and correct"
-10. Signature Block
-
-[PL (Packing List) 필수 항목 - 물류/통관용]
-generate_trade_document(document_type="PL") 시 아래 필드 반드시 포함:
-1. Document Header: PL No., Date, 관련 Invoice No.
-2. Seller/Buyer 정보
-3. Shipping Info: Port of Loading, Destination, Vessel
-4. Items Table: No., Description, Qty, Carton No., Cartons, N.W.(kg), G.W.(kg), Dimensions(cm)
-5. Summary: Total Cartons, Total N.W., Total G.W., Total CBM(입방미터)
-6. Marks & Numbers: Shipping Mark (수입자 요건 반영)
-7. Country of Origin: "Republic of Korea"
-
-[이메일 생성 규칙]
-이메일 작성 시:
-1. Subject Line: 명확하고 구체적 (예: "Proforma Invoice PI-20260225-001 | K-Beauty Co.")
-2. Opening: 수신자 직함+이름 (Dear Mr./Ms. + contact_person)
-3. Body: 목적, 핵심 내용, 다음 단계(Next Step) 구체적 제시
-4. Closing: 정중한 마무리 (We look forward to... / Please do not hesitate to...)
-5. Signature: seller.email_signature가 있으면 그대로 삽입. 없으면 seller.contact_name, contact_title, company_name, phone, email로 자동 구성
-6. 톤: 비즈니스 포멀 (축약형 사용 금지, 이모지 금지)`;
+RULE 6 - COMPLIANCE:
+- compliance_results must include per-ingredient results with inci_name, status(PASS/FAIL/CAUTION), regulation, action_item.
+- FAIL action_items: suggest specific alternative ingredients, dosage limits, labeling fixes, or certifications needed.
+- Never suggest irrelevant actions like "draft an email" for compliance issues.`;
 
 const SYSTEM_PROMPT_FAST = `당신은 FLONIX AI 무역 어시스턴트입니다. K-뷰티 수출 전문가로서 간결하고 실무적으로 답변하세요.
 - 한국어 우선, 구조화된 답변
@@ -222,7 +101,7 @@ const TOOLS = [{
     }
   }, {
     name: "generate_trade_document",
-    description: "PI/CI/PL 등 무역 서류를 생성합니다.",
+    description: "Generate a trade document. type: PI|CI|PL|EMAIL|NDA|SALES_CONTRACT|PROPOSAL. PI must include: doc number, seller/buyer blocks, items table with HS Code + Country of Origin, payment terms, incoterms, banking info, T&C (4 clauses), signature block. CI adds: B/L No, certification statement ('We certify this invoice is true and correct'), net/gross weights, amount in words. PL adds: carton details, N.W./G.W. per item, CBM, shipping mark, cargo summary box. NDA: confidential_info_scope, duration, governing law, dispute resolution. SALES_CONTRACT: payment_method, shipping_deadline, quality_inspection, force_majeure. PROPOSAL: company_overview, certifications, product_highlights, why_choose_us, partnership_terms, cta. EMAIL: professional B2B format with subject, Dear/Regards, CTA with deadline, seller.email_signature at bottom.",
     parameters: {
       type: "object",
       properties: {
@@ -344,6 +223,14 @@ const TOOLS = [{
     }
   }]
 }];
+
+/** base64 접두사 방어 제거 (data:...;base64, 프리픽스 이중 방어) */
+const cleanBase64 = (base64String: string): string => {
+  if (base64String.includes(',')) {
+    return base64String.split(',')[1];
+  }
+  return base64String;
+};
 
 interface SSEPayload { type: string; data: Record<string, unknown> }
 function sse(p: SSEPayload): string { return `data: ${JSON.stringify(p)}\n\n`; }
@@ -573,8 +460,8 @@ Deno.serve(async (req) => {
         const fileRes = await fetch(url);
         if (fileRes.ok) {
           const contentType = fileRes.headers.get("content-type") || "application/octet-stream";
-          if (contentType.startsWith("image/")) {
-            // 이미지 → Gemini Vision inlineData (chunked base64)
+          if (contentType.startsWith("image/") || contentType === "application/pdf") {
+            // 이미지/PDF → Gemini Vision inlineData (chunked base64 + 방어 클리닝)
             const buf = await fileRes.arrayBuffer();
             const bytes = new Uint8Array(buf);
             let b64 = "";
@@ -582,17 +469,8 @@ Deno.serve(async (req) => {
             for (let i = 0; i < bytes.length; i += CHUNK) {
               b64 += btoa(String.fromCharCode(...bytes.slice(i, i + CHUNK)));
             }
-            userParts.push({ inlineData: { mimeType: contentType, data: b64 } });
-          } else if (contentType === "application/pdf") {
-            // PDF → Gemini inlineData (PDF 직접 지원)
-            const buf = await fileRes.arrayBuffer();
-            const bytes = new Uint8Array(buf);
-            let b64 = "";
-            const CHUNK = 8192;
-            for (let i = 0; i < bytes.length; i += CHUNK) {
-              b64 += btoa(String.fromCharCode(...bytes.slice(i, i + CHUNK)));
-            }
-            userParts.push({ inlineData: { mimeType: "application/pdf", data: b64 } });
+            const mime = contentType.startsWith("image/") ? contentType : "application/pdf";
+            userParts.push({ inlineData: { mimeType: mime, data: cleanBase64(b64) } });
           } else {
             // 기타 → 텍스트로 첨부
             const text = await fileRes.text();
@@ -625,14 +503,25 @@ Deno.serve(async (req) => {
           for (let loop = 0; loop < MAX_CONTEXT_LOOPS; loop++) {
             const r1 = await geminiStreamWithRetry(currentMessages, true, 8192, selectedApiUrl, selectedPrompt);
             if (!r1.ok || !r1.body) {
-              const isOverload = r1.status === 503 || r1.status === 429;
+              const errText = await r1.text().catch(() => "");
+              let userMessage: string;
+              let errCode = String(r1.status);
+
+              if (r1.status === 503 || r1.status === 429) {
+                userMessage = "AI 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해주세요.";
+              } else if (r1.status === 400 && (errText.includes("INVALID_ARGUMENT") || errText.includes("token"))) {
+                userMessage = "요청 처리 중 오류가 발생했습니다. 메시지를 짧게 나눠서 다시 시도해주세요.";
+                errCode = "TOKEN_LIMIT";
+              } else if (r1.status === 400 && (errText.includes("base64") || errText.includes("decode"))) {
+                userMessage = "파일 처리 중 오류가 발생했습니다. JPG/PNG/PDF 파일을 다시 업로드해주세요.";
+                errCode = "BASE64_ERROR";
+              } else {
+                userMessage = `AI 서비스 일시적 오류입니다. 잠시 후 다시 시도해주세요. (오류코드: ${r1.status})`;
+              }
+
               push({
                 type: "error",
-                data: {
-                  message: isOverload
-                    ? "AI 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해주세요."
-                    : `Gemini Error: ${await r1.text()}`,
-                },
+                data: { error: true, message: userMessage, code: errCode },
               });
               ctrl.close();
               return;
@@ -792,7 +681,21 @@ Deno.serve(async (req) => {
             data: { had_fn: hasFn, fn_name: fnName || null, ts: Date.now(), model: selectedModel },
           });
         } catch (e) {
-          push({ type: "error", data: { message: (e as Error).message } });
+          const errMsg = (e as Error).message || "";
+          let userMessage: string;
+          let errCode = "INTERNAL";
+
+          if (errMsg.includes("token") || errMsg.includes("INVALID_ARGUMENT")) {
+            userMessage = "요청 처리 중 오류가 발생했습니다. 메시지를 짧게 나눠서 다시 시도해주세요.";
+            errCode = "TOKEN_LIMIT";
+          } else if (errMsg.includes("base64") || errMsg.includes("decode")) {
+            userMessage = "파일 처리 중 오류가 발생했습니다. JPG/PNG/PDF 파일을 다시 업로드해주세요.";
+            errCode = "BASE64_ERROR";
+          } else {
+            userMessage = `AI 서비스 일시적 오류입니다. 잠시 후 다시 시도해주세요. (오류코드: ${errCode})`;
+          }
+          console.error("[trade-assistant] Stream error:", errMsg);
+          push({ type: "error", data: { error: true, message: userMessage, code: errCode } });
         } finally {
           ctrl.close();
         }
@@ -808,9 +711,17 @@ Deno.serve(async (req) => {
       },
     });
   } catch (e) {
-    return new Response(JSON.stringify({ error: (e as Error).message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    console.error("[trade-assistant] Top-level error:", (e as Error).message);
+    return new Response(
+      JSON.stringify({
+        error: true,
+        message: "AI 서비스 일시적 오류입니다. 잠시 후 다시 시도해주세요.",
+        code: "INTERNAL",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      },
+    );
   }
 });

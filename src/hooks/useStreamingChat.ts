@@ -1,6 +1,7 @@
 // Backend SSE ↔ Zustand Store 연결 + Partial JSON 실시간 파싱
 
 import { useCallback, useRef } from "react";
+import { toast } from "sonner";
 import { useStreamingStore } from "../stores/streamingStore";
 import { StreamingJsonAccumulator } from "../utils/partialJsonParser";
 import { supabase } from "../integrations/supabase/client";
@@ -83,8 +84,21 @@ export function useStreamingChat() {
           }
         );
 
+        // JSON 에러 응답 처리 (Edge Function에서 status 200 + error: true로 반환)
+        const contentType = res.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          const json = await res.json();
+          if (json.error) {
+            const msg = json.message || "알 수 없는 오류가 발생했습니다.";
+            toast.warning(msg);
+            store.setError(msg);
+            return;
+          }
+        }
+
         if (!res.ok) {
           const txt = await res.text();
+          toast.warning(`서버 오류 (${res.status})`);
           store.setError(`서버 오류 (${res.status}): ${txt}`);
           return;
         }
@@ -239,8 +253,9 @@ function handleSSE(
       store.completeStreaming();
       break;
     case "error": {
-      const msg = evt.data.message as string;
-      store.setError(msg || "알 수 없는 오류가 발생했습니다.");
+      const msg = (evt.data.message as string) || "알 수 없는 오류가 발생했습니다.";
+      toast.warning(msg);
+      store.setError(msg);
       break;
     }
   }

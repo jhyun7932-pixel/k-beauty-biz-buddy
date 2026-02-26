@@ -278,8 +278,8 @@ export default function ChatPanel({
 
         {/* 에러 */}
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
-            <strong>오류:</strong> {error}
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
+            <strong>안내:</strong> {error}
           </div>
         )}
 

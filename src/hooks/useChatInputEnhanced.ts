@@ -1,6 +1,7 @@
 // 채팅 입력 강화 훅 - /슬래시 커맨드 + @멘션 + 파일 첨부
 
 import { useState, useCallback, useMemo } from "react";
+import { toast } from "sonner";
 import { filterCommands, type SlashCommand } from "../lib/chatCommands";
 import type { MentionItem } from "../components/chat/MentionMenu";
 import type { Buyer } from "./useBuyers";
@@ -116,9 +117,25 @@ export function useChatInputEnhanced({ buyers, productEntries }: UseChatInputEnh
   const addFiles = useCallback((files: FileList | File[]) => {
     const arr = Array.from(files);
     const ALLOWED = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
-    const MAX_SIZE = 10 * 1024 * 1024; // 10MB
-    const valid = arr.filter((f) => ALLOWED.includes(f.type) && f.size <= MAX_SIZE);
-    setAttachedFiles((prev) => [...prev, ...valid]);
+    const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+    const MAX_PDF_SIZE = 20 * 1024 * 1024;   // 20MB
+
+    const valid: File[] = [];
+    for (const f of arr) {
+      if (!ALLOWED.includes(f.type)) {
+        toast.error("지원 형식: JPG, PNG, WEBP, PDF");
+        continue;
+      }
+      const maxSize = f.type === "application/pdf" ? MAX_PDF_SIZE : MAX_IMAGE_SIZE;
+      if (f.size > maxSize) {
+        toast.error("파일 크기가 너무 큽니다. 이미지 10MB, PDF 20MB 이하로 업로드해주세요.");
+        continue;
+      }
+      valid.push(f);
+    }
+    if (valid.length > 0) {
+      setAttachedFiles((prev) => [...prev, ...valid]);
+    }
   }, []);
 
   const removeFile = useCallback((index: number) => {
