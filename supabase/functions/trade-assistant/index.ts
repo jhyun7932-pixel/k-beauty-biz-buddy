@@ -10,37 +10,20 @@ const corsHeaders = {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // SYSTEM PROMPT (핵심 규칙만, 토큰 최소화)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const SYSTEM_PROMPT = `You are FLONIX AI, a specialized K-Beauty export trade assistant for Korean SMEs.
+const SYSTEM_PROMPT = `You are FLONIX AI, K-Beauty export trade assistant.
 
-=== CRITICAL RULES ===
-1. ALWAYS call get_user_context tool FIRST before generating any document.
-2. If seller is null OR seller.company_name is null:
-   → Respond in Korean: "⚙️ 설정 페이지에서 회사 기본정보(회사명, 주소, 담당자)를 먼저 저장해주세요. 저장 후 다시 요청해주시면 즉시 문서를 생성해드립니다."
-   → Do NOT generate any document.
-3. NEVER fabricate seller, buyer, or product information.
-4. Use ONLY exact data from get_user_context results.
-5. Respond to user in Korean. All trade documents must be written in English.
-6. Use generate_document tool for all document rendering. Never output raw document content in chat.
-7. Country of Origin: always "Republic of Korea". Currency: USD. Incoterms 2020.
+RULES:
+1. Call get_user_context FIRST before any document generation.
+2. If seller null: tell user to save company info in Settings(설정) page. Do NOT generate document.
+3. Never invent data. Use only get_user_context results.
+4. Reply in Korean. Documents in English.
+5. Use generate_document tool for all document output.
+6. COO: Republic of Korea. Currency: USD. Incoterms 2020.
 
-=== DOCUMENT GENERATION RULES ===
-PI (Proforma Invoice):
-- Doc number format: FLONIX-PI-YYYYMMDD-XXXX
-- Required sections: Document Header, Seller Block, Buyer Block, Items Table (No/Description/HS Code/COO/Unit/Qty/Unit Price/Amount), Shipping Terms (Incoterms + Port of Loading + Port of Discharge + Partial Shipment + Transhipment), Payment Terms, Banking Information, Packaging Info, Terms & Conditions (4 mandatory clauses below), Signature Block
-- T&C clauses: "1. Validity: This PI is valid for 30 days from issue date. 2. Samples: Available upon request. 3. Quality: Products conform to GMP standards. COA available on request. 4. Governing Law: Republic of Korea."
-- Footer: SAY USD [amount in words] ONLY
-
-CI (Commercial Invoice):
-- Doc number: FLONIX-CI-YYYYMMDD-XXXX
-- All PI fields + B/L No. field + Net Weight/Gross Weight columns + certification: "I/We hereby certify that the information in this invoice is true and correct, and the goods are of Korean origin."
-
-PL (Packing List):
-- Doc number: FLONIX-PL-YYYYMMDD-XXXX
-- Ref. CI No. | Items table: No/Item/Qty per Carton/No. of Cartons/Total Qty/Net Wt(kg)/Gross Wt(kg)/CBM/Batch No. | Totals row | Shipping Mark | Cargo Summary Box
-
-EMAIL:
-- Subject format by stage: First contact: "[Company] - K-Beauty Product Proposal | [Category]" / Sample: "Re: Sample Feedback - [Product]" / Order: "[Company] - PI Confirmation | [PI No.]"
-- Structure: Dear Ms./Mr. [Last Name] → Context 1 sentence → Main body → CTA with deadline → Best regards + full signature`;
+PI: doc no(FLONIX-PI-YYYYMMDD-XXXX), seller/buyer blocks, items table(HS Code/COO/Unit/Qty/Unit Price/Amount), payment terms, bank info, T&C(4 clauses: validity 30days/samples available/GMP quality/Korea governing law), signature, SAY USD ONLY.
+CI: PI fields + B/L No + weight columns + certification statement.
+PL: carton table(qty/carton/cartons/total qty/NW/GW/CBM/batch no), shipping mark, cargo summary.
+EMAIL: subject by stage, Dear Ms/Mr [name], body, CTA+deadline, Best regards+signature.`;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TOOLS 정의
@@ -84,26 +67,68 @@ async function fetchUserContext(supabaseClient: any, userId: string) {
     const [companiesRes, buyersRes, productsRes] = await Promise.all([
       supabaseClient
         .from("companies")
-        .select("company_name,company_name_ko,representative,address,phone,email,website,contact_name,contact_title,contact_phone,contact_email,email_signature,logo_url,bank_info,export_countries,certifications")
+        .select([
+          "company_name",
+          "company_name_ko",
+          "representative",
+          "address",
+          "phone",
+          "email",
+          "website",
+          "contact_name",
+          "contact_title",
+          "contact_phone",
+          "contact_email",
+          "email_signature",
+          "bank_info",
+          "export_countries",
+          "certifications"
+        ].join(","))
         .eq("user_id", userId)
         .maybeSingle(),
+
       supabaseClient
         .from("buyers")
-        .select("id,company_name,contact_name,contact_title,email,phone,country,address,payment_terms,incoterms,currency,notes")
+        .select([
+          "id",
+          "company_name",
+          "contact_name",
+          "contact_title",
+          "email",
+          "country",
+          "address",
+          "payment_terms",
+          "incoterms",
+          "currency"
+        ].join(","))
         .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(20),
+        .order("updated_at", { ascending: false })
+        .limit(10),
+
+      // ⚡ ingredients 완전 제외 - 토큰 주범
       supabaseClient
         .from("products")
-        .select("id,name,name_ko,hs_code,unit_price,unit,description,ingredients,net_weight,gross_weight,cbm,country_of_origin,category")
+        .select([
+          "id",
+          "name",
+          "name_ko",
+          "hs_code",
+          "unit_price",
+          "unit",
+          "category",
+          "net_weight",
+          "gross_weight",
+          "cbm"
+        ].join(","))
         .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(30),
+        .order("updated_at", { ascending: false })
+        .limit(15),
     ]);
 
     const co = companiesRes.data;
 
-    return {
+    // 토큰 사용량 사전 검증
+    const ctx = {
       seller: co ? {
         company_name: co.company_name || null,
         company_name_ko: co.company_name_ko || null,
@@ -119,12 +144,20 @@ async function fetchUserContext(supabaseClient: any, userId: string) {
         contact_phone: co.contact_phone || null,
         contact_email: co.contact_email || null,
         email_signature: co.email_signature || null,
-        logo_url: co.logo_url || null,
         bank_info: co.bank_info || null,
       } : null,
       buyers: buyersRes.data || [],
       products: productsRes.data || [],
     };
+
+    // 토큰 추정 및 로깅
+    const jsonStr = JSON.stringify(ctx);
+    const estimatedTokens = Math.ceil(jsonStr.length / 4);
+    console.log(`[FLONIX] context size: ${jsonStr.length} chars, ~${estimatedTokens} tokens`);
+    console.log(`[FLONIX] buyers: ${ctx.buyers.length}, products: ${ctx.products.length}`);
+
+    return ctx;
+
   } catch (dbError: any) {
     console.error("[FLONIX] fetchUserContext error:", dbError.message);
     return { seller: null, buyers: [], products: [] };
@@ -160,13 +193,12 @@ Deno.serve(async (req: Request) => {
     const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY")!;
     const anthropic = new Anthropic({ apiKey: anthropicKey });
 
-    // 히스토리 제한 - 토큰 초과 방지
-    const hasAttachment = !!attachedFile;
-    const MAX_HISTORY = hasAttachment ? 3 : 8;
-    const rawMessages = messages || [];
-    const trimmedMessages = rawMessages.length > MAX_HISTORY
-      ? rawMessages.slice(-MAX_HISTORY)
-      : rawMessages;
+    // ⚡ 히스토리 엄격 제한 - 토큰 초과 방지
+    const MAX_HISTORY = attachedFile ? 2 : 6;
+    const allMessages = messages || [];
+    const trimmedMessages = allMessages.length > MAX_HISTORY
+      ? allMessages.slice(-MAX_HISTORY)
+      : allMessages;
 
     // Claude 메시지 형식 변환
     const claudeMessages: Anthropic.MessageParam[] = trimmedMessages.map((msg: any, idx: number) => {
