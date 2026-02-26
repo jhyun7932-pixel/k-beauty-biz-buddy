@@ -63,6 +63,7 @@ interface StreamingState {
 }
 
 function fnToDocType(name: string): DocumentType {
+  if (name === "generate_document") return "PI";
   if (name === "check_compliance") return "COMPLIANCE";
   return "PI";
 }

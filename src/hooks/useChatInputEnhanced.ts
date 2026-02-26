@@ -117,7 +117,7 @@ export function useChatInputEnhanced({ buyers, productEntries }: UseChatInputEnh
   const addFiles = useCallback((files: FileList | File[]) => {
     const arr = Array.from(files);
     const ALLOWED = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
-    const MAX_IMAGE_SIZE = 4 * 1024 * 1024;  // 4MB (Gemini 안전 한도)
+    const MAX_IMAGE_SIZE = 5 * 1024 * 1024;  // 5MB (Claude 안전 한도)
     const MAX_PDF_SIZE = 10 * 1024 * 1024;   // 10MB
 
     const valid: File[] = [];
