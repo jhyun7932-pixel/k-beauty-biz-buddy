@@ -59,15 +59,23 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- 2) 기존 name 값 → company_name 으로 복사 (한번만)
-UPDATE public.companies
-SET company_name = name
-WHERE company_name IS NULL AND name IS NOT NULL;
+-- 2) 기존 name 값 → company_name 으로 복사 (컬럼 존재 시에만)
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='companies' AND column_name='name') THEN
+    UPDATE public.companies
+    SET company_name = name
+    WHERE company_name IS NULL AND name IS NOT NULL;
+  END IF;
+END $$;
 
--- 3) 기존 company_name_kr → company_name_ko 로 복사
-UPDATE public.companies
-SET company_name_ko = company_name_kr
-WHERE company_name_ko IS NULL AND company_name_kr IS NOT NULL;
+-- 3) 기존 company_name_kr → company_name_ko 로 복사 (컬럼 존재 시에만)
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='companies' AND column_name='company_name_kr') THEN
+    UPDATE public.companies
+    SET company_name_ko = company_name_kr
+    WHERE company_name_ko IS NULL AND company_name_kr IS NOT NULL;
+  END IF;
+END $$;
 
 -- 4) user_id UNIQUE 제약 (이전 마이그레이션과 중복 방지)
 DO $$ BEGIN
