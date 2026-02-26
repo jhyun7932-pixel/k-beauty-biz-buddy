@@ -1,198 +1,122 @@
-// Backend JSON Response ↔ Zustand Store 연결 (Claude Anthropic)
-
 import { useCallback, useRef } from "react";
-import { toast } from "sonner";
-import { useStreamingStore } from "../stores/streamingStore";
 import { supabase } from "../integrations/supabase/client";
+import { useAuth } from "./useAuth";
+import { useTradeStore } from "../stores/tradeStore";
+
+const EDGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/trade-assistant`;
 
 export function useStreamingChat() {
-  const store = useStreamingStore();
+  const { user } = useAuth();
   const abortRef = useRef<AbortController | null>(null);
+  const store = useTradeStore();
 
-  const sendMessage = useCallback(
-    async (message: string, files?: File[]) => {
-      // 이전 요청 취소
-      abortRef.current?.abort();
-      const ac = new AbortController();
-      abortRef.current = ac;
+  const sendMessage = useCallback(async (content: string) => {
+    if (!user || !content.trim()) return;
+    if (!["idle","complete","error"].includes(store.streamPhase)) return;
 
-      // 사용자 메시지 추가 + 로딩 시작
-      store.addUserMessage(message || (files?.length ? "[파일 첨부]" : ""));
-      store.startStreaming();
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
 
-      try {
-        // 인증 토큰
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session) {
-          store.setError("로그인이 필요합니다. 새로고침 후 다시 시도해주세요.");
-          return;
-        }
+    store.addUserMessage(content);
+    store.onStreamConnecting();
 
-        // 파일 → base64 변환 (첫 번째 파일만 전송)
-        let attachedFile: { base64: string; mimeType: string } | undefined;
-        if (files && files.length > 0) {
-          const file = files[0];
-          try {
-            const base64 = await fileToBase64(file);
-            attachedFile = { base64, mimeType: file.type };
-          } catch {
-            toast.warning("파일 변환 실패. 다시 시도해주세요.");
+    const apiMessages = useTradeStore.getState().messages.map(m => ({
+      role: m.role, content: m.content,
+    }));
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("세션 없음. 다시 로그인해주세요.");
+
+      const response = await fetch(EDGE_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ messages: apiMessages, hasFile: false }),
+        signal: abortRef.current.signal,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${response.status}`);
+      }
+      if (!response.body) throw new Error("Response body null");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        let eventName = "";
+        let dataLine = "";
+        for (const line of lines) {
+          if (line.startsWith("event: ")) eventName = line.slice(7).trim();
+          else if (line.startsWith("data: ")) dataLine = line.slice(6).trim();
+          else if (line === "" && eventName && dataLine) {
+            try {
+              const data = JSON.parse(dataLine);
+              switch (eventName) {
+                case "text_delta":
+                  if (data.text) store.onTextDelta(data.text);
+                  break;
+                case "tool_call_start":
+                  store.onToolCallStart(data.tool_name, data.tool_id);
+                  break;
+                case "tool_input_delta":
+                  store.onToolInputDelta(data.partial_json, data.accumulated);
+                  break;
+                case "tool_call_complete":
+                  store.onToolCallComplete(data.tool_name, data.document);
+                  break;
+                case "stream_end":
+                  store.onStreamEnd();
+                  break;
+                case "error":
+                  store.onStreamError(data.message);
+                  break;
+              }
+            } catch(e) { console.warn("SSE parse err", e); }
+            eventName = ""; dataLine = "";
           }
-        }
-
-        // 히스토리 (최근 10개 — 토큰 초과 방지)
-        const history = store.messages.slice(-10).map((m) => ({
-          role: m.role,
-          content: m.content,
-        }));
-
-        // 현재 메시지를 히스토리에 추가
-        const messages = [
-          ...history,
-          { role: "user", content: message || "이 파일을 분석해줘" },
-        ];
-
-        // Edge Function 호출 (JSON 응답)
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        const res = await fetch(
-          `${supabaseUrl}/functions/v1/trade-assistant`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${session.access_token}`,
-            },
-            body: JSON.stringify({
-              messages,
-              userId: session.user.id,
-              ...(attachedFile ? { attachedFile } : {}),
-            }),
-            signal: ac.signal,
-          }
-        );
-
-        // HTTP 에러 처리 (4xx, 5xx)
-        if (!res.ok) {
-          let errorDetail = "";
-          try {
-            const errJson = await res.json();
-            errorDetail = errJson.message || errJson.error || JSON.stringify(errJson);
-          } catch {
-            errorDetail = await res.text().catch(() => "응답을 읽을 수 없습니다.");
-          }
-          const errorMsg = `서버 오류 (${res.status}): ${errorDetail}`;
-          console.error("[useStreamingChat]", errorMsg);
-          toast.warning(`서버 오류 (${res.status})`);
-          store.setError(errorMsg);
-          return;
-        }
-
-        // JSON 파싱
-        let json: any;
-        try {
-          json = await res.json();
-        } catch (parseErr) {
-          console.error("[useStreamingChat] JSON 파싱 실패:", parseErr);
-          store.setError("서버 응답을 파싱할 수 없습니다.");
-          return;
-        }
-
-        // 서버 에러 응답 처리 (status 200이지만 error: true)
-        if (json.error) {
-          const errorMsg = json.message || "알 수 없는 오류가 발생했습니다.";
-          const debugInfo = json.debug || "";
-          console.error("[useStreamingChat] 서버 에러:", errorMsg, debugInfo);
-          toast.warning(errorMsg);
-          store.setError(debugInfo ? `${errorMsg}\n(상세: ${debugInfo})` : errorMsg);
-          return;
-        }
-
-        // 응답 텍스트 처리
-        const responseText = json.message || "";
-        if (responseText) {
-          store.appendTextDelta(responseText);
-        }
-
-        // 문서 생성 결과 처리 (우측 패널)
-        if (json.document) {
-          const docType = json.document.type || "PI";
-          const docData = json.document.data || {};
-          const fullArgs = JSON.stringify({ document_type: docType, ...docData });
-
-          store.startToolCall("generate_document");
-          store.completeToolCall(fullArgs);
-        }
-
-        // 정상 완료
-        store.completeStreaming();
-
-        // 채팅 히스토리 DB 저장
-        try {
-          if (responseText) {
-            await supabase.from("ai_chat_messages").insert([
-              {
-                user_id: session.user.id,
-                role: "user",
-                content: message,
-                is_doc_output: false,
-              },
-              {
-                user_id: session.user.id,
-                role: "assistant",
-                content: responseText,
-                is_doc_output: !!json.document,
-              },
-            ]);
-          }
-        } catch {
-          // DB 저장 실패 무시
-        }
-      } catch (err) {
-        if ((err as Error).name === "AbortError") {
-          store.reset();
-        } else {
-          console.error("[useStreamingChat] catch:", err);
-          store.setError(`네트워크 오류: ${(err as Error).message}`);
         }
       }
-    },
-    [store]
-  );
 
-  const cancelStreaming = useCallback(() => {
+      // stream_end 이벤트가 오지 않았을 경우 안전하게 완료 처리
+      const finalPhase = useTradeStore.getState().streamPhase;
+      if (finalPhase !== "complete" && finalPhase !== "error") {
+        store.onStreamEnd();
+      }
+    } catch(err) {
+      if ((err as Error).name === "AbortError") { store.resetStream(); return; }
+      store.onStreamError(err instanceof Error ? err.message : "연결 오류");
+    }
+  }, [user, store]);
+
+  const cancelStream = useCallback(() => {
     abortRef.current?.abort();
-    abortRef.current = null;
-    store.reset();
+    store.resetStream();
   }, [store]);
 
   return {
-    sendMessage,
-    cancelStreaming,
-    isStreaming: store.isStreaming,
-    phase: store.phase,
     messages: store.messages,
-    currentStreamingText: store.currentStreamingText,
-    toolCall: store.toolCall,
+    streamingText: store.streamingText,
+    streamPhase: store.streamPhase,
+    isStreaming: ["connecting","streaming_text","tool_call_start","tool_call_streaming"].includes(store.streamPhase),
     rightPanelOpen: store.rightPanelOpen,
-    rightPanelDocType: store.rightPanelDocType,
-    error: store.error,
-    closeRightPanel: store.closeRightPanel,
-    toggleRightPanel: store.toggleRightPanel,
+    currentDocument: store.currentDocument,
+    complianceResult: store.complianceResult,
+    partialDocumentJson: store.partialDocumentJson,
+    activeToolName: store.activeToolName,
+    errorMessage: store.errorMessage,
+    sendMessage,
+    cancelStream,
   };
-}
-
-// File → base64 변환 유틸
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      // data:image/jpeg;base64,... 형태 그대로 전달 (서버에서 cleanBase64 처리)
-      resolve(result);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
 }

@@ -1,677 +1,99 @@
-import React, { useRef, useCallback, useState, useEffect } from 'react';
-import { useProjectStore, TargetCountry, COUNTRY_NAMES } from '@/stores/projectStore';
-import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/hooks/useAuth';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Settings,
-  Building2,
-  Upload,
-  Image,
-  FileText,
-  Stamp,
-  Trash2,
-  Save,
-  User,
-  Mail,
-  CheckCircle,
-  X,
-  Globe,
-  Loader2,
-} from 'lucide-react';
-import { toast } from 'sonner';
+import React, { useState, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 
-const ALL_COUNTRIES: TargetCountry[] = ['US', 'JP', 'EU', 'HK', 'TW', 'CN', 'VN', 'ID', 'MY', 'TH', 'AU'];
+interface CompanyForm {
+  company_name:string; address:string; tel:string; email:string;
+  contact_name:string; business_no:string; bank_name:string; account_no:string; swift_code:string;
+}
+const EMPTY:CompanyForm = { company_name:"",address:"",tel:"",email:"",contact_name:"",business_no:"",bank_name:"",account_no:"",swift_code:"" };
 
 export default function SettingsPage() {
-  const { companySettings, setCompanySettings } = useProjectStore();
   const { user } = useAuth();
+  const [form, setForm] = useState<CompanyForm>(EMPTY);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<Date|null>(null);
+  const [error, setError] = useState<string|null>(null);
 
-  const logoInputRef = useRef<HTMLInputElement>(null);
-  const stampInputRef = useRef<HTMLInputElement>(null);
-  const signatureInputRef = useRef<HTMLInputElement>(null);
-  const pdfInputRef = useRef<HTMLInputElement>(null);
+  useEffect(()=>{ if(user) load(); },[user]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSave = async () => {
-    if (!user) {
-      toast.error('로그인이 필요합니다.');
-      return;
-    }
-    setSaving(true);
+  async function load() {
+    setLoading(true);
     try {
-      const companyData = {
-        user_id: user.id,
-        company_name: companySettings.companyName || null,
-        company_name_ko: companySettings.companyNameKr || null,
-        representative: companySettings.ceoName || null,
-        address: companySettings.address || null,
-        phone: companySettings.phone || null,
-        email: companySettings.email || null,
-        website: companySettings.website || null,
-        export_countries: companySettings.exportCountries || [],
-        certifications: companySettings.certifications || [],
-        contact_name: companySettings.contactName || null,
-        contact_title: companySettings.contactTitle || null,
-        contact_phone: companySettings.contactPhone || null,
-        contact_email: companySettings.contactEmail || null,
-        email_signature: companySettings.emailSignature || null,
-        logo_url: companySettings.logoUrl || null,
-        seal_url: companySettings.stampImageUrl || null,
-        signature_url: companySettings.signatureImageUrl || null,
-        bank_info: companySettings.bankInfo || null,
-        default_moq: companySettings.defaultMoq || 500,
-        default_lead_time: companySettings.defaultLeadTime || 14,
-        name: companySettings.companyName || '',
-        updated_at: new Date().toISOString(),
-      };
-
-      const { error } = await supabase
-        .from('companies')
-        .upsert(companyData, { onConflict: 'user_id', ignoreDuplicates: false });
-
-      if (error) {
-        console.error('저장 오류:', error);
-        toast.error(`저장 실패: ${error.message}`);
-        return;
-      }
-
-      toast.success('회사 정보가 저장되었습니다. AI 에이전트가 이 정보를 사용합니다.');
-    } catch (e) {
-      console.error('handleSave error:', e);
-      toast.error(`저장 중 오류가 발생했습니다.`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // 페이지 마운트 시 DB에서 기존 회사정보 로드 → store에 반영
-  useEffect(() => {
-    if (!user) return;
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from('companies')
-          .select('*')
-          .eq('user_id', user.id)
-          .maybeSingle();
-
-        if (error) {
-          console.error('회사정보 불러오기 오류:', error);
-          return;
+      const { data:co } = await supabase.from("companies").select("*").eq("user_id",user!.id).maybeSingle();
+      if (co) {
+        setForm({ company_name:co.company_name||"", address:co.address||"", tel:co.tel||"", email:co.email||"", contact_name:co.contact_name||"", business_no:co.business_no||"", bank_name:(co.bank_info as any)?.bank_name||"", account_no:(co.bank_info as any)?.account_no||"", swift_code:(co.bank_info as any)?.swift_code||"" });
+      } else {
+        const { data:pr } = await supabase.from("profiles").select("company_info,email").eq("id",user!.id).maybeSingle();
+        if (pr?.company_info) {
+          const ci = pr.company_info as any;
+          setForm({ company_name:ci.company_name||"", address:ci.address||"", tel:ci.tel||ci.phone||"", email:ci.email||pr.email||"", contact_name:ci.contact_person||"", business_no:ci.business_no||"", bank_name:ci.bank_name||"", account_no:ci.account_no||"", swift_code:ci.swift_code||"" });
         }
-        if (!data) return;
-
-        setCompanySettings({
-          companyName: data.company_name || data.name || '',
-          companyNameKr: data.company_name_ko || '',
-          ceoName: data.representative || '',
-          address: data.address || '',
-          phone: data.phone || '',
-          email: data.email || '',
-          website: data.website || '',
-          exportCountries: data.export_countries || [],
-          certifications: data.certifications || [],
-          contactName: data.contact_name || '',
-          contactTitle: data.contact_title || '',
-          contactPhone: data.contact_phone || '',
-          contactEmail: data.contact_email || '',
-          emailSignature: data.email_signature || '',
-          logoUrl: data.logo_url || '',
-          stampImageUrl: data.seal_url || '',
-          signatureImageUrl: data.signature_url || '',
-          bankInfo: data.bank_info || null,
-          defaultMoq: data.default_moq || 500,
-          defaultLeadTime: data.default_lead_time || 14,
-        });
-      } catch (err) {
-        console.error('loadCompanyData error:', err);
       }
-    })();
-  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Image upload handler (generic)
-  const handleImageUpload = useCallback(
-    (field: 'logoUrl' | 'stampImageUrl' | 'signatureImageUrl', maxSizeMB = 2) =>
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      if (file.size > maxSizeMB * 1024 * 1024) {
-        toast.error(`이미지 크기는 ${maxSizeMB}MB 이하만 가능합니다.`);
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        setCompanySettings({ [field]: ev.target?.result as string });
-        toast.success('이미지가 등록되었습니다.');
-      };
-      reader.readAsDataURL(file);
-    },
-    [setCompanySettings]
-  );
-
-  const handlePdfUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error('PDF 파일은 10MB 이하만 가능합니다.');
-      return;
-    }
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-      toast.error('PDF 파일만 업로드 가능합니다.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      setCompanySettings({ introPdfUrl: ev.target?.result as string, introPdfName: file.name });
-      toast.success('소개서가 등록되었습니다.');
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const toggleCountry = (country: TargetCountry) => {
-    const current = companySettings.exportCountries || [];
-    const next = current.includes(country)
-      ? current.filter((c) => c !== country)
-      : [...current, country];
-    setCompanySettings({ exportCountries: next });
-  };
-
-  return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="p-4 border-b border-border bg-card/50">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold flex items-center gap-2">
-              <Settings className="h-5 w-5" />
-              회사 설정
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              AI 에이전트가 문서 생성 시 참조하는 회사 정보를 설정하세요.
-            </p>
-          </div>
-          <Button onClick={handleSave} disabled={saving} className="gap-2">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            {saving ? '저장 중...' : '저장'}
-          </Button>
-        </div>
-      </div>
-
-      {/* Content */}
-      <ScrollArea className="flex-1">
-        <div className="p-4 max-w-3xl">
-          <Tabs defaultValue="company" className="w-full">
-            <TabsList className="grid w-full grid-cols-3 mb-6">
-              <TabsTrigger value="company" className="gap-1.5 text-xs sm:text-sm">
-                <Building2 className="h-4 w-4 hidden sm:block" />
-                회사 기본 정보
-              </TabsTrigger>
-              <TabsTrigger value="brand" className="gap-1.5 text-xs sm:text-sm">
-                <Image className="h-4 w-4 hidden sm:block" />
-                브랜드 자산 업로드
-              </TabsTrigger>
-              <TabsTrigger value="contact" className="gap-1.5 text-xs sm:text-sm">
-                <User className="h-4 w-4 hidden sm:block" />
-                담당자 & 연동
-              </TabsTrigger>
-            </TabsList>
-
-            {/* ===== Tab 1: 회사 기본 정보 ===== */}
-            <TabsContent value="company" className="space-y-6 mt-0">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Building2 className="h-5 w-5 text-primary" />
-                    기본 정보
-                  </CardTitle>
-                  <CardDescription>
-                    문서(PI, 계약서 등)와 바이어 커뮤니케이션에 자동으로 반영됩니다.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>영문 회사명 <span className="text-destructive">*</span></Label>
-                    <Input
-                      value={companySettings.companyName}
-                      onChange={(e) => setCompanySettings({ companyName: e.target.value })}
-                      placeholder="K-Beauty Co., Ltd."
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>한글 회사명</Label>
-                    <Input
-                      value={companySettings.companyNameKr}
-                      onChange={(e) => setCompanySettings({ companyNameKr: e.target.value })}
-                      placeholder="케이뷰티 주식회사"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>대표자명 (영문)</Label>
-                    <Input
-                      value={companySettings.ceoName || ''}
-                      onChange={(e) => setCompanySettings({ ceoName: e.target.value })}
-                      placeholder="Hong Gildong"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>웹사이트</Label>
-                    <Input
-                      value={companySettings.website}
-                      onChange={(e) => setCompanySettings({ website: e.target.value })}
-                      placeholder="https://www.company.com"
-                    />
-                  </div>
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label>영문 주소 <span className="text-destructive">*</span></Label>
-                    <Input
-                      value={companySettings.address}
-                      onChange={(e) => setCompanySettings({ address: e.target.value })}
-                      placeholder="123, Gangnam-daero, Gangnam-gu, Seoul, 06164, Republic of Korea"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>대표 전화번호</Label>
-                    <Input
-                      value={companySettings.phone}
-                      onChange={(e) => setCompanySettings({ phone: e.target.value })}
-                      placeholder="+82-2-1234-5678"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>대표 이메일</Label>
-                    <Input
-                      type="email"
-                      value={companySettings.email}
-                      onChange={(e) => setCompanySettings({ email: e.target.value })}
-                      placeholder="info@company.com"
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Globe className="h-5 w-5 text-primary" />
-                    주력 수출 국가
-                  </CardTitle>
-                  <CardDescription>
-                    컴플라이언스 체크 및 문서 생성 시 우선 적용됩니다.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-wrap gap-2">
-                    {ALL_COUNTRIES.map((c) => {
-                      const selected = (companySettings.exportCountries || []).includes(c);
-                      return (
-                        <Badge
-                          key={c}
-                          variant={selected ? 'default' : 'outline'}
-                          className={`cursor-pointer transition-all text-sm px-3 py-1.5 ${
-                            selected
-                              ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                              : 'hover:bg-accent'
-                          }`}
-                          onClick={() => toggleCountry(c)}
-                        >
-                          {selected && <CheckCircle className="h-3 w-3 mr-1" />}
-                          {COUNTRY_NAMES[c]}
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                  {(companySettings.exportCountries || []).length > 0 && (
-                    <p className="text-xs text-muted-foreground mt-3">
-                      ✅ {(companySettings.exportCountries || []).length}개국 선택됨
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <CheckCircle className="h-5 w-5 text-primary" />
-                    인증 정보
-                  </CardTitle>
-                  <CardDescription>
-                    보유한 인증을 입력하세요. (예: GMP, ISO 22716, CPNP 등)
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Input
-                    value={(companySettings.certifications || []).join(', ')}
-                    onChange={(e) => {
-                      const certs = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
-                      setCompanySettings({ certifications: certs });
-                    }}
-                    placeholder="GMP, ISO 22716, CPNP, FDA"
-                  />
-                  <p className="text-xs text-muted-foreground mt-2">
-                    쉼표(,)로 구분하여 입력해주세요.
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Building2 className="h-5 w-5 text-primary" />
-                    은행 정보 (Banking Information)
-                  </CardTitle>
-                  <CardDescription>
-                    PI, CI 등 무역 문서에 자동 반영됩니다.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>은행명 (Bank Name)</Label>
-                    <Input
-                      value={companySettings.bankInfo?.bankName || ''}
-                      onChange={(e) => setCompanySettings({
-                        bankInfo: { ...(companySettings.bankInfo || { bankName: '', accountNumber: '', swiftCode: '', accountHolder: '' }), bankName: e.target.value }
-                      })}
-                      placeholder="Kookmin Bank"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>SWIFT Code</Label>
-                    <Input
-                      value={companySettings.bankInfo?.swiftCode || ''}
-                      onChange={(e) => setCompanySettings({
-                        bankInfo: { ...(companySettings.bankInfo || { bankName: '', accountNumber: '', swiftCode: '', accountHolder: '' }), swiftCode: e.target.value }
-                      })}
-                      placeholder="CZNBKRSE"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>계좌번호 (Account Number)</Label>
-                    <Input
-                      value={companySettings.bankInfo?.accountNumber || ''}
-                      onChange={(e) => setCompanySettings({
-                        bankInfo: { ...(companySettings.bankInfo || { bankName: '', accountNumber: '', swiftCode: '', accountHolder: '' }), accountNumber: e.target.value }
-                      })}
-                      placeholder="123-456-789012"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>예금주 (Account Holder)</Label>
-                    <Input
-                      value={companySettings.bankInfo?.accountHolder || ''}
-                      onChange={(e) => setCompanySettings({
-                        bankInfo: { ...(companySettings.bankInfo || { bankName: '', accountNumber: '', swiftCode: '', accountHolder: '' }), accountHolder: e.target.value }
-                      })}
-                      placeholder="K-Beauty Co., Ltd."
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* ===== Tab 2: 브랜드 자산 업로드 ===== */}
-            <TabsContent value="brand" className="space-y-6 mt-0">
-              {/* Logo */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Image className="h-5 w-5 text-primary" />
-                    회사 로고
-                  </CardTitle>
-                  <CardDescription>
-                    문서 헤더에 자동 삽입됩니다. (PNG/JPG, 2MB 이하)
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <input ref={logoInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleImageUpload('logoUrl')} />
-                  <UploadZone
-                    imageUrl={companySettings.logoUrl}
-                    onUploadClick={() => logoInputRef.current?.click()}
-                    onRemove={() => setCompanySettings({ logoUrl: '' })}
-                    label="로고 이미지 업로드"
-                    previewSize="w-32 h-20"
-                  />
-                </CardContent>
-              </Card>
-
-              {/* Stamp / Signature Image */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Stamp className="h-5 w-5 text-primary" />
-                    공식 직인 / 서명 이미지
-                  </CardTitle>
-                  <CardDescription>
-                    PI, 계약서의 서명란에 자동 표시됩니다. (PNG/JPG, 2MB 이하)
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <Label className="text-xs text-muted-foreground mb-2 block">직인</Label>
-                    <input ref={stampInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleImageUpload('stampImageUrl')} />
-                    <UploadZone
-                      imageUrl={companySettings.stampImageUrl}
-                      onUploadClick={() => stampInputRef.current?.click()}
-                      onRemove={() => setCompanySettings({ stampImageUrl: '' })}
-                      label="직인 업로드"
-                      previewSize="w-24 h-24"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs text-muted-foreground mb-2 block">서명</Label>
-                    <input ref={signatureInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handleImageUpload('signatureImageUrl')} />
-                    <UploadZone
-                      imageUrl={companySettings.signatureImageUrl || ''}
-                      onUploadClick={() => signatureInputRef.current?.click()}
-                      onRemove={() => setCompanySettings({ signatureImageUrl: '' })}
-                      label="서명 업로드"
-                      previewSize="w-24 h-24"
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Intro PDF */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <FileText className="h-5 w-5 text-primary" />
-                    회사/브랜드 소개서 (PDF)
-                  </CardTitle>
-                  <CardDescription>
-                    AI가 소개서를 분석하여 맥락 정보로 활용합니다. (PDF, 10MB 이하)
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <input ref={pdfInputRef} type="file" accept=".pdf" className="hidden" onChange={handlePdfUpload} />
-                  {companySettings.introPdfUrl ? (
-                    <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-secondary/30">
-                      <FileText className="h-8 w-8 text-primary flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{companySettings.introPdfName || '소개서.pdf'}</p>
-                        <p className="text-xs text-muted-foreground">업로드 완료</p>
-                      </div>
-                      <div className="flex gap-1.5">
-                        <Button variant="outline" size="sm" onClick={() => pdfInputRef.current?.click()}>
-                          변경
-                        </Button>
-                        <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setCompanySettings({ introPdfUrl: '', introPdfName: '' })}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <DragDropArea onClick={() => pdfInputRef.current?.click()} label="소개서 PDF를 여기로 드래그하거나 클릭하세요" icon={<FileText className="h-8 w-8 text-muted-foreground" />} />
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* ===== Tab 3: 담당자 & 연동 ===== */}
-            <TabsContent value="contact" className="space-y-6 mt-0">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <User className="h-5 w-5 text-primary" />
-                    담당자 정보
-                  </CardTitle>
-                  <CardDescription>
-                    이메일 서명 및 문서 담당자 란에 자동 반영됩니다.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>담당자명 (영문)</Label>
-                    <Input
-                      value={companySettings.contactName}
-                      onChange={(e) => setCompanySettings({ contactName: e.target.value })}
-                      placeholder="Minjun Kim"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>직급 (영문)</Label>
-                    <Input
-                      value={companySettings.contactTitle || ''}
-                      onChange={(e) => setCompanySettings({ contactTitle: e.target.value })}
-                      placeholder="Export Manager"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>전화번호</Label>
-                    <Input
-                      value={companySettings.contactPhone}
-                      onChange={(e) => setCompanySettings({ contactPhone: e.target.value })}
-                      placeholder="+82-10-1234-5678"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>이메일</Label>
-                    <Input
-                      type="email"
-                      value={companySettings.contactEmail}
-                      onChange={(e) => setCompanySettings({ contactEmail: e.target.value })}
-                      placeholder="export@company.com"
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Mail className="h-5 w-5 text-primary" />
-                    이메일 서명 (Signature)
-                  </CardTitle>
-                  <CardDescription>
-                    AI가 바이어 이메일 초안 작성 시 하단에 자동 삽입합니다.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Textarea
-                    value={companySettings.emailSignature}
-                    onChange={(e) => setCompanySettings({ emailSignature: e.target.value })}
-                    placeholder={`Best regards,
-
-${companySettings.contactName || '[담당자명]'}
-${companySettings.contactTitle || '[직급]'}
-${companySettings.companyName || '[회사명]'}
-Tel: ${companySettings.contactPhone || '[전화번호]'}
-Email: ${companySettings.contactEmail || '[이메일]'}`}
-                    rows={7}
-                    className="font-mono text-sm"
-                  />
-                  {companySettings.contactName && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-3 gap-1.5"
-                      onClick={() => {
-                        const sig = `Best regards,\n\n${companySettings.contactName}\n${companySettings.contactTitle || ''}\n${companySettings.companyName}\nTel: ${companySettings.contactPhone}\nEmail: ${companySettings.contactEmail}`;
-                        setCompanySettings({ emailSignature: sig.trim() });
-                        toast.success('서명이 자동 생성되었습니다.');
-                      }}
-                    >
-                      ✨ 서명 자동 생성
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        </div>
-      </ScrollArea>
-    </div>
-  );
-}
-
-// ===== Reusable Sub-Components =====
-
-function UploadZone({
-  imageUrl,
-  onUploadClick,
-  onRemove,
-  label,
-  previewSize,
-}: {
-  imageUrl: string;
-  onUploadClick: () => void;
-  onRemove: () => void;
-  label: string;
-  previewSize: string;
-}) {
-  if (imageUrl) {
-    return (
-      <div className="flex items-center gap-4">
-        <div className={`${previewSize} border border-border rounded-lg flex items-center justify-center bg-secondary/30 p-2`}>
-          <img src={imageUrl} alt={label} className="max-w-full max-h-full object-contain" />
-        </div>
-        <div className="flex flex-col gap-2">
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={onUploadClick}>
-            <Upload className="h-3.5 w-3.5" /> 변경
-          </Button>
-          <Button variant="ghost" size="sm" className="gap-1.5 text-destructive" onClick={onRemove}>
-            <Trash2 className="h-3.5 w-3.5" /> 삭제
-          </Button>
-        </div>
-      </div>
-    );
+    } catch(e){ console.error(e); } finally { setLoading(false); }
   }
 
-  return <DragDropArea onClick={onUploadClick} label={label} icon={<Image className="h-8 w-8 text-muted-foreground" />} />;
-}
+  async function save() {
+    if (!user) return;
+    setSaving(true); setError(null);
+    try {
+      const { error:e } = await supabase.from("companies").upsert({
+        user_id:user.id, company_name:form.company_name, address:form.address, tel:form.tel,
+        email:form.email, contact_name:form.contact_name, business_no:form.business_no,
+        bank_info:{ bank_name:form.bank_name, account_no:form.account_no, swift_code:form.swift_code },
+        updated_at:new Date().toISOString(),
+      } as any,{ onConflict:"user_id" });
+      if (e) throw e;
+      await supabase.from("profiles").update({ company_info:{ company_name:form.company_name, address:form.address, tel:form.tel, email:form.email, contact_person:form.contact_name, business_no:form.business_no, bank_name:form.bank_name, account_no:form.account_no, swift_code:form.swift_code }, updated_at:new Date().toISOString() } as any).eq("id",user.id);
+      setSavedAt(new Date());
+    } catch(e){ setError(e instanceof Error?e.message:"저장 실패"); } finally { setSaving(false); }
+  }
 
-function DragDropArea({
-  onClick,
-  label,
-  icon,
-}: {
-  onClick: () => void;
-  label: string;
-  icon: React.ReactNode;
-}) {
-  const [isDragging, setIsDragging] = useState(false);
+  const f = (k:keyof CompanyForm,v:string)=>setForm(p=>({...p,[k]:v}));
+
+  if (loading) return <div className="flex items-center justify-center h-64 text-gray-400">회사 정보를 불러오는 중...</div>;
 
   return (
-    <div
-      onClick={onClick}
-      onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-      onDragLeave={() => setIsDragging(false)}
-      onDrop={(e) => { e.preventDefault(); setIsDragging(false); }}
-      className={`flex flex-col items-center gap-2 p-6 border-2 border-dashed rounded-xl cursor-pointer transition-all ${
-        isDragging
-          ? 'border-primary bg-primary/5'
-          : 'border-border hover:border-primary/50 hover:bg-accent/30'
-      }`}
-    >
-      {icon}
-      <p className="text-sm text-muted-foreground text-center">{label}</p>
+    <div className="max-w-2xl mx-auto p-6 space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">회사 정보 설정</h1>
+        <p className="text-sm text-gray-500 mt-1">PI, CI, PL 등 모든 무역 서류에 자동 반영됩니다.</p>
+      </div>
+      {[
+        { title:"기본 정보", fields:[
+          {label:"회사명 (영문)",key:"company_name",ph:"KBEAUTY LABS CO., LTD.",req:true},
+          {label:"사업자등록번호",key:"business_no",ph:"123-45-67890"},
+          {label:"주소 (영문)",key:"address",ph:"123 Beauty Street, Gangnam-gu, Seoul, Republic of Korea"},
+        ]},
+        { title:"연락처", fields:[
+          {label:"담당자명",key:"contact_name",ph:"Kim, Minjun"},
+          {label:"이메일",key:"email",ph:"export@kbeautylabs.com"},
+          {label:"전화번호",key:"tel",ph:"+82-2-1234-5678"},
+        ]},
+        { title:"은행 정보", fields:[
+          {label:"은행명 (영문)",key:"bank_name",ph:"Kookmin Bank"},
+          {label:"계좌번호",key:"account_no",ph:"123-456-789012"},
+          {label:"SWIFT Code",key:"swift_code",ph:"CZNBKRSEXXX"},
+        ]},
+      ].map(section=>(
+        <div key={section.title} className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
+          <h2 className="font-semibold text-gray-700">{section.title}</h2>
+          {section.fields.map((fd:any)=>(
+            <div key={fd.key}>
+              <label className="block text-sm font-medium text-gray-600 mb-1">{fd.label}{fd.req&&<span className="text-red-500 ml-1">*</span>}</label>
+              <input type="text" value={(form as any)[fd.key]} onChange={e=>f(fd.key as keyof CompanyForm,e.target.value)} placeholder={fd.ph} className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-400"/>
+            </div>
+          ))}
+        </div>
+      ))}
+      <div className="flex items-center gap-4">
+        <button onClick={save} disabled={saving||!form.company_name} className="px-6 py-2.5 bg-violet-600 text-white font-medium rounded-lg hover:bg-violet-700 disabled:opacity-50 transition-colors">
+          {saving?"저장 중...":"저장하기"}
+        </button>
+        {savedAt&&<span className="text-sm text-green-600">&#10003; {savedAt.toLocaleTimeString()}에 저장됨</span>}
+        {error&&<span className="text-sm text-red-500">{error}</span>}
+      </div>
     </div>
   );
 }
