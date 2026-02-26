@@ -82,12 +82,25 @@ const tools: Anthropic.Tool[] = [
 async function fetchUserContext(supabaseClient: any, userId: string) {
   try {
     const [companiesRes, buyersRes, productsRes] = await Promise.all([
-      supabaseClient.from("companies").select("*").eq("user_id", userId).maybeSingle(),
-      supabaseClient.from("buyers").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
-      supabaseClient.from("products").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+      supabaseClient
+        .from("companies")
+        .select("company_name,company_name_ko,representative,address,phone,email,website,contact_name,contact_title,contact_phone,contact_email,email_signature,logo_url,bank_info,export_countries,certifications")
+        .eq("user_id", userId)
+        .maybeSingle(),
+      supabaseClient
+        .from("buyers")
+        .select("id,company_name,contact_name,contact_title,email,phone,country,address,payment_terms,incoterms,currency,notes")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(20),
+      supabaseClient
+        .from("products")
+        .select("id,name,name_ko,hs_code,unit_price,unit,description,ingredients,net_weight,gross_weight,cbm,country_of_origin,category")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(30),
     ]);
 
-    // user_roles는 절대 조회하지 않음 (RLS 재귀 위험)
     const co = companiesRes.data;
 
     return {
@@ -113,8 +126,7 @@ async function fetchUserContext(supabaseClient: any, userId: string) {
       products: productsRes.data || [],
     };
   } catch (dbError: any) {
-    console.error("[FLONIX] fetchUserContext DB error:", dbError.message);
-    // DB 오류 시 빈 컨텍스트 반환 (AI는 계속 동작)
+    console.error("[FLONIX] fetchUserContext error:", dbError.message);
     return { seller: null, buyers: [], products: [] };
   }
 }
@@ -148,12 +160,13 @@ Deno.serve(async (req: Request) => {
     const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY")!;
     const anthropic = new Anthropic({ apiKey: anthropicKey });
 
-    // 히스토리 제한 (이미지 있으면 5개, 없으면 20개)
-    const hasImage = !!attachedFile;
-    const maxHistory = hasImage ? 5 : 20;
-    const trimmedMessages = messages.length > maxHistory
-      ? messages.slice(-maxHistory)
-      : messages;
+    // 히스토리 제한 - 토큰 초과 방지
+    const hasAttachment = !!attachedFile;
+    const MAX_HISTORY = hasAttachment ? 3 : 8;
+    const rawMessages = messages || [];
+    const trimmedMessages = rawMessages.length > MAX_HISTORY
+      ? rawMessages.slice(-MAX_HISTORY)
+      : rawMessages;
 
     // Claude 메시지 형식 변환
     const claudeMessages: Anthropic.MessageParam[] = trimmedMessages.map((msg: any, idx: number) => {
@@ -235,6 +248,22 @@ Deno.serve(async (req: Request) => {
               toolResult = { error: "No user ID provided" };
             } else {
               toolResult = await fetchUserContext(supabaseClient, userId);
+              // 토큰 초과 방지: tool result가 50K 토큰(~200K chars) 초과 시 압축
+              const resultStr = JSON.stringify(toolResult);
+              const estimatedTokens = Math.ceil(resultStr.length / 4);
+              if (estimatedTokens > 50000) {
+                console.warn(`[FLONIX] Tool result too large: ~${estimatedTokens} tokens. Compressing...`);
+                toolResult = {
+                  seller: toolResult.seller,
+                  buyers: (toolResult.buyers || []).slice(0, 5),
+                  products: (toolResult.products || []).slice(0, 10),
+                  _truncated: true,
+                  _original_counts: {
+                    buyers: (toolResult.buyers || []).length,
+                    products: (toolResult.products || []).length,
+                  },
+                };
+              }
             }
           } else if (block.name === "generate_document") {
             const input = block.input as { type: string; data: any };
@@ -285,6 +314,8 @@ Deno.serve(async (req: Request) => {
       userMsg = "API 키 설정 오류입니다. 관리자에게 문의해주세요.";
     } else if (msg.includes("base64") || msg.includes("image")) {
       userMsg = "파일 처리 오류입니다. 이미지를 JPG로 저장 후 다시 업로드해주세요.";
+    } else if (msg.includes("prompt is too long") || msg.includes("token") || msg.includes("context length") || msg.includes("max_tokens")) {
+      userMsg = "대화가 너무 길어져서 처리할 수 없습니다. 새 대화를 시작해주세요.";
     } else if (msg.includes("module") || msg.includes("import") || msg.includes("not found")) {
       userMsg = "서버 모듈 로딩 오류입니다. 관리자에게 문의해주세요.";
     }
