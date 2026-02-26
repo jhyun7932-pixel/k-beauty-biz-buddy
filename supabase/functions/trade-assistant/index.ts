@@ -12,7 +12,7 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
 /** 메시지 내용 기반 모델 자동 분기 */
 function selectModel(message: string): { url: string; model: string } {
-  const DOC_KEYWORDS = /PI|CI|PL|NDA|계약서|CONTRACT|compliance|규제|컴플라이언스|COMPLIANCE|서류|문서|작성|생성|인보이스|패킹리스트|매매계약/i;
+  const DOC_KEYWORDS = /PI|CI|PL|NDA|계약서|CONTRACT|서류|문서|작성|생성|인보이스|패킹리스트|매매계약/i;
   if (DOC_KEYWORDS.test(message)) {
     return { url: GEMINI_URL_PRO, model: GEMINI_MODEL_PRO };
   }
@@ -45,28 +45,23 @@ async function fetchUserContextCached(
   return data as unknown as Record<string, unknown>;
 }
 
-const SYSTEM_PROMPT = `You are FLONIX AI, a K-Beauty export trade assistant.
+const SYSTEM_PROMPT = `You are FLONIX AI, a K-Beauty export trade assistant for Korean SMEs.
 
-CRITICAL RULES:
-1. Always call get_user_context tool FIRST before generating documents.
-2. If seller data is null: tell user to save company info in Settings page. Do NOT generate document.
-3. Never fabricate seller/buyer/product data.
-4. Respond to user in Korean. Write all trade documents in English.
-5. Use generate_trade_document tool for all document output.
-6. Country of Origin is always "Republic of Korea". Currency: USD. Terms: Incoterms 2020.
-
-DOCUMENT RULES (apply when generating):
-- PI: doc number, seller block, buyer block, items table (HS Code, COO, qty, unit price, amount), incoterms, payment terms, bank info, T&C 4 clauses, signature block, SAY USD ONLY line
-- CI: same as PI + B/L No field + certification statement + net/gross weight columns
-- PL: carton table (qty/carton, cartons, total qty, NW, GW, CBM, batch no), shipping mark, cargo summary
-- EMAIL: subject line, Dear Ms/Mr [name], body, CTA with deadline, Best regards + signature
-
-IMAGE/PDF: analyze content, extract key fields, explain in Korean. INCI list: extract ingredients, call check_compliance if country specified.`;
+RULES:
+1. Call get_user_context FIRST before any document generation.
+2. If seller.company_name is null: respond in Korean to save info in Settings page first.
+3. Never invent seller/buyer/product data. Use only get_user_context results.
+4. Respond to user in Korean. Write trade documents in English.
+5. Use generate_document tool for all document output. Never show raw JSON in chat.
+6. Country of Origin: Republic of Korea. Currency: USD. Terms: Incoterms 2020.
+7. PI must include: document number, seller/buyer blocks, items table with HS Code, payment terms, bank info, T&C 4 clauses, signature block.
+8. CI adds: B/L No, weight columns, certification statement.
+9. PL adds: carton table with NW/GW/CBM, shipping mark, cargo summary.
+10. Email: subject, Dear [name], CTA with deadline, Best regards + signature.`;
 
 const SYSTEM_PROMPT_FAST = `당신은 FLONIX AI 무역 어시스턴트입니다. K-뷰티 수출 전문가로서 간결하고 실무적으로 답변하세요.
 - 한국어 우선, 구조화된 답변
 - 무역 용어/HS Code/Incoterms 정확 사용
-- Function Calling: get_user_context(사용자 데이터), generate_trade_document(서류), check_compliance(규제)
 - seller 정보는 반드시 get_user_context로 조회한 실제 데이터만 사용`;
 
 const TOOLS = [{
@@ -82,7 +77,7 @@ const TOOLS = [{
     }
   }, {
     name: "generate_trade_document",
-    description: "Generate a trade document. type: PI|CI|PL|EMAIL|NDA|SALES_CONTRACT|PROPOSAL. PI must include: doc number, seller/buyer blocks, items table with HS Code + Country of Origin, payment terms, incoterms, banking info, T&C (4 clauses), signature block. CI adds: B/L No, certification statement ('We certify this invoice is true and correct'), net/gross weights, amount in words. PL adds: carton details, N.W./G.W. per item, CBM, shipping mark, cargo summary box. NDA: confidential_info_scope, duration, governing law, dispute resolution. SALES_CONTRACT: payment_method, shipping_deadline, quality_inspection, force_majeure. PROPOSAL: company_overview, certifications, product_highlights, why_choose_us, partnership_terms, cta. EMAIL: professional B2B format with subject, Dear/Regards, CTA with deadline, seller.email_signature at bottom.",
+    description: "Generate a trade document (PI/CI/PL/NDA/SALES_CONTRACT/PROPOSAL). Include all required fields per document type.",
     parameters: {
       type: "object",
       properties: {
@@ -166,42 +161,6 @@ const TOOLS = [{
       },
       required: ["document_type"],
     }
-  }, {
-    name: "check_compliance",
-    description: "K-뷰티 제품의 수출 대상국 규제 적합성을 체크합니다. 성분별 PASS/FAIL 결과를 compliance_results에 반드시 포함하세요.",
-    parameters: {
-      type: "object",
-      properties: {
-        product_name: { type: "string" },
-        target_country: { type: "string", enum: ["US","EU","CN","JP","TH","VN","ID","PH","MY","SG","AE"] },
-        ingredients: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              inci_name: { type: "string" }, percentage: { type: "number" }, cas_number: { type: "string" }
-            }
-          }
-        },
-        product_category: { type: "string", enum: ["skincare","makeup","haircare","bodycare","sunscreen","fragrance"] },
-        overall_status: { type: "string", enum: ["PASS","FAIL"], description: "전체 규제 통과 여부" },
-        compliance_results: {
-          type: "array",
-          description: "각 성분별 규제 검토 결과",
-          items: {
-            type: "object",
-            properties: {
-              inci_name: { type: "string", description: "성분명" },
-              percentage: { type: "number", description: "함량 (%)" },
-              status: { type: "string", enum: ["PASS","FAIL","CAUTION"], description: "적합 여부" },
-              regulation: { type: "string", description: "관련 규정명 (예: EU Reg. 1223/2009 Annex II)" },
-              action_item: { type: "string", description: "사용자가 지금 해야 할 조치 (FAIL/CAUTION 시 필수)" },
-            }
-          }
-        },
-      },
-      required: ["product_name", "target_country"],
-    }
   }]
 }];
 
@@ -229,6 +188,14 @@ function parseGeminiLine(line: string): GeminiChunk | null {
   if (j === "[DONE]") return { kind: "finish" };
   try {
     const d = JSON.parse(j);
+    // 토큰 사용량 모니터링
+    const usage = d.usageMetadata;
+    if (usage) {
+      console.log(`[FLONIX TOKEN] prompt: ${usage.promptTokenCount}, output: ${usage.candidatesTokenCount || 0}, total: ${usage.totalTokenCount || 0}`);
+      if (usage.promptTokenCount > 800000) {
+        console.warn("[FLONIX WARNING] Prompt token usage above 80% limit!");
+      }
+    }
     const c = d.candidates?.[0];
     if (!c?.content?.parts) return null;
     for (const p of c.content.parts) {
@@ -499,17 +466,17 @@ Deno.serve(async (req) => {
 
               if (r1.status === 503 || r1.status === 429) {
                 userMessage = "AI 서버가 일시적으로 혼잡합니다. 잠시 후 다시 시도해주세요.";
-              } else if (r1.status === 400 && (errText.includes("INVALID_ARGUMENT") || errText.includes("token") || errText.includes("1048576"))) {
-                userMessage = "대화 내용이 너무 길어졌습니다. 새 대화를 시작하거나 메시지를 간결하게 작성해주세요.";
+              } else if (errText.includes("token") || errText.includes("1048576") || errText.includes("exceed")) {
+                userMessage = "새 대화를 시작해주세요. 새 채팅창을 열고 다시 시도하면 정상 작동합니다.";
                 errCode = "TOKEN_LIMIT";
-              } else if (r1.status === 400 && (errText.includes("base64") || errText.includes("decode") || errText.includes("inline_data"))) {
-                userMessage = "파일 처리 오류입니다. 이미지를 JPG/PNG로 변환 후 다시 업로드해주세요.";
+              } else if (errText.includes("base64") || errText.includes("inline_data") || errText.includes("bytes")) {
+                userMessage = "파일 처리 오류입니다. 이미지를 JPG로 저장 후 다시 업로드해주세요.";
                 errCode = "BASE64_ERROR";
               } else if (errText.includes("SAFETY")) {
                 userMessage = "콘텐츠 안전 정책으로 처리할 수 없습니다. 내용을 수정 후 다시 시도해주세요.";
                 errCode = "SAFETY";
               } else {
-                userMessage = `AI 서비스 일시적 오류입니다. 잠시 후 다시 시도해주세요. (오류코드: ${r1.status})`;
+                userMessage = "AI 서비스 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
               }
 
               push({
@@ -610,7 +577,7 @@ Deno.serve(async (req) => {
             break;
           }
 
-          // Phase 2: Function Call 후 확인 메시지 (generate_trade_document / check_compliance)
+          // Phase 2: Function Call 후 확인 메시지 (generate_trade_document)
           if (hasFn && fnName !== "get_user_context") {
             let parsedArgs: Record<string, unknown> = {};
             try { parsedArgs = JSON.parse(fnArgs); } catch { /* ignore */ }
@@ -678,11 +645,11 @@ Deno.serve(async (req) => {
           let userMessage: string;
           let errCode = "INTERNAL";
 
-          if (errMsg.includes("token") || errMsg.includes("INVALID_ARGUMENT") || errMsg.includes("1048576")) {
-            userMessage = "대화 내용이 너무 길어졌습니다. 새 대화를 시작하거나 메시지를 간결하게 작성해주세요.";
+          if (errMsg.includes("token") || errMsg.includes("1048576") || errMsg.includes("exceed")) {
+            userMessage = "새 대화를 시작해주세요. 새 채팅창을 열고 다시 시도하면 정상 작동합니다.";
             errCode = "TOKEN_LIMIT";
-          } else if (errMsg.includes("base64") || errMsg.includes("decode") || errMsg.includes("inline_data")) {
-            userMessage = "파일 처리 오류입니다. 이미지를 JPG/PNG로 변환 후 다시 업로드해주세요.";
+          } else if (errMsg.includes("base64") || errMsg.includes("inline_data") || errMsg.includes("bytes")) {
+            userMessage = "파일 처리 오류입니다. 이미지를 JPG로 저장 후 다시 업로드해주세요.";
             errCode = "BASE64_ERROR";
           } else if (errMsg.includes("SAFETY")) {
             userMessage = "콘텐츠 안전 정책으로 처리할 수 없습니다. 내용을 수정 후 다시 시도해주세요.";
