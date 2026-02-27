@@ -225,6 +225,7 @@ export default function RightPanel() {
 
   const rightPanelOpen = store.rightPanelOpen;
   const streamPhase = store.streamPhase;
+  const partialDocumentJson = store.partialDocumentJson;
   const rightPanelDocType = deriveDocType(store.activeToolName, store.currentDocument);
   const closeRightPanel = () => useTradeStore.setState({ rightPanelOpen: false });
 
@@ -253,7 +254,7 @@ export default function RightPanel() {
 
   if (!rightPanelOpen) return null;
 
-  const isStreaming = false; // JSON 방식에서는 실시간 스트리밍 없음
+  const isStreaming = streamPhase === "tool_call_start" || streamPhase === "tool_call_streaming";
   const isComplete =
     phase === "tool_call_complete" ||
     phase === "complete";
@@ -539,10 +540,9 @@ function DocRenderer({
 }) {
   const data = useMemo(() => {
     if (editedArgs) return editedArgs;
-    if (toolCall.isComplete && toolCall.completedArgs)
-      return toolCall.completedArgs;
+    if (toolCall.completedArgs) return toolCall.completedArgs;
     return null;
-  }, [toolCall.isComplete, toolCall.completedArgs, editedArgs]);
+  }, [toolCall.completedArgs, editedArgs]);
 
   if (!data) return <FullSkeleton />;
 
