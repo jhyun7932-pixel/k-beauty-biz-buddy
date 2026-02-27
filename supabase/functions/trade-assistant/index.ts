@@ -241,7 +241,7 @@ const TOOLS: Anthropic.Messages.Tool[] = [
 async function fetchUserContext(userId: string) {
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
   const [companyRes, profileRes, buyersRes, productsRes] = await Promise.all([
-    sb.from("companies").select("company_name,address,tel,email,contact_name,business_no,bank_info").eq("user_id",userId).maybeSingle(),
+    sb.from("companies").select("company_name,address,tel,email,contact_name,business_no,bank_info,customs_code,ceo_name,logo_url,seal_url").eq("user_id",userId).maybeSingle(),
     sb.from("profiles").select("company_info,full_name,email").eq("id",userId).maybeSingle(),
     sb.from("buyers").select("company_name,country,contact_name,contact_email,contact_phone,buyer_type,channel").eq("user_id",userId).limit(20),
     sb.from("products").select("name_en,name_kr,sku_code,hs_code,unit_price_range,moq,category").eq("user_id",userId).limit(30),
@@ -249,7 +249,8 @@ async function fetchUserContext(userId: string) {
 
   let seller = null;
   if (companyRes.data) {
-    seller = { company_name:companyRes.data.company_name, address:companyRes.data.address, tel:companyRes.data.tel, email:companyRes.data.email, contact_person:companyRes.data.contact_name, business_no:companyRes.data.business_no, bank_info:companyRes.data.bank_info };
+    const cd = companyRes.data as any;
+    seller = { company_name:cd.company_name, address:cd.address, tel:cd.tel, email:cd.email, contact_person:cd.contact_name, business_no:cd.business_no, bank_info:cd.bank_info, customs_code:cd.customs_code, ceo_name:cd.ceo_name, logo_url:cd.logo_url, seal_url:cd.seal_url };
   } else if (profileRes.data?.company_info) {
     const ci = profileRes.data.company_info as any;
     seller = { company_name:ci.company_name||ci.companyName||profileRes.data.full_name||"미등록", address:ci.address, tel:ci.tel||ci.phone, email:ci.email||profileRes.data.email, contact_person:ci.contact_person||ci.contactPerson, business_no:ci.business_no, bank_info:ci.bank_info };
