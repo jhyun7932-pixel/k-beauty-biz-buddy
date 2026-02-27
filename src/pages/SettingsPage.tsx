@@ -93,15 +93,34 @@ export default function SettingsPage() {
     if (!user) return;
     setSaving(true); setError(null);
     try {
-      const { error: e } = await supabase.from("companies").upsert({
-        user_id: user.id, company_name: form.company_name, address: form.address, tel: form.tel,
-        email: form.email, contact_name: form.contact_name, business_no: form.business_no,
-        customs_code: form.customs_code, ceo_name: form.ceo_name,
-        logo_url: form.logo_url, seal_url: form.seal_url,
-        bank_info: { bank_name: form.bank_name, account_no: form.account_no, swift_code: form.swift_code },
-        updated_at: new Date().toISOString(),
-      } as any, { onConflict: "user_id" });
-      if (e) throw e;
+      const { error: e } = await supabase
+        .from("companies")
+        .upsert(
+          {
+            user_id: user.id,
+            company_name: form.company_name,
+            address: form.address,
+            tel: form.tel,
+            email: form.email,
+            contact_name: form.contact_name,
+            business_no: form.business_no,
+            ceo_name: form.ceo_name,
+            customs_code: form.customs_code,
+            logo_url: form.logo_url,
+            seal_url: form.seal_url,
+            bank_info: {
+              bank_name: form.bank_name,
+              account_no: form.account_no,
+              swift_code: form.swift_code,
+            },
+            updated_at: new Date().toISOString(),
+          } as any,
+          { onConflict: "user_id" }
+        );
+      if (e) {
+        console.error("companies upsert error:", e);
+        throw new Error(`저장 실패: ${e.message} (code: ${e.code})`);
+      }
       await supabase.from("profiles").update({
         company_info: {
           company_name: form.company_name, address: form.address, tel: form.tel, email: form.email,
