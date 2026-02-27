@@ -55,7 +55,8 @@ export default function SettingsPage() {
   if (loading) return <div className="flex items-center justify-center h-64 text-gray-400">회사 정보를 불러오는 중...</div>;
 
   return (
-    <div className="max-w-2xl mx-auto p-6 space-y-6">
+    <div className="h-full overflow-y-auto">
+    <div className="max-w-2xl mx-auto p-6 pb-20 space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">회사 정보 설정</h1>
         <p className="text-sm text-gray-500 mt-1">PI, CI, PL 등 모든 무역 서류에 자동 반영됩니다.</p>
@@ -94,6 +95,7 @@ export default function SettingsPage() {
         {savedAt&&<span className="text-sm text-green-600">&#10003; {savedAt.toLocaleTimeString()}에 저장됨</span>}
         {error&&<span className="text-sm text-red-500">{error}</span>}
       </div>
+    </div>
     </div>
   );
 }
