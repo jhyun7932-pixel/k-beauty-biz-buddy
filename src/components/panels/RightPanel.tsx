@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { useTradeStore } from "../../stores/tradeStore";
 import type { TradeDocument, ComplianceResult as TradeComplianceResult } from "../../stores/tradeStore";
+import { CrossCheckPanel } from "../CrossCheckPanel";
 
 type DocumentType = TradeDocument["document_type"] | "COMPLIANCE" | null;
 
@@ -419,6 +420,9 @@ export default function RightPanel() {
           </button>
         </div>
       )}
+
+      {/* Cross-check 검증 결과 */}
+      {isComplete && <CrossCheckPanel />}
 
       {/* 본문 */}
       <div className="flex-1 overflow-y-auto p-5">
