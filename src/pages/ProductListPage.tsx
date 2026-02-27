@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAppStore } from '@/stores/appStore';
+import { useProducts } from '@/hooks/useProducts';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
@@ -28,8 +29,10 @@ const CATEGORY_HS_MAP: Record<string, { label: string; hsCode: string }> = {
 };
 
 export default function ProductListPage() {
-  const { productEntries, addProductEntry, removeProductEntry } = useAppStore();
+  const { productEntries, removeProductEntry } = useAppStore();
+  const { saveProduct, loadProducts, deleteProduct } = useProducts();
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     productName: '',
     category: '',
@@ -118,30 +121,44 @@ export default function ProductListPage() {
 
   const handleSave = async () => {
     if (!form.productName || !form.skuCode) return;
-    addProductEntry({ ...form, inciText });
+    setSaving(true);
 
-    // Persist INCI data to Supabase product_ingredients table
-    if (inciText.trim()) {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const ingredientList = inciText.split(',').map(s => s.trim()).filter(Boolean);
-          await supabase.from('product_ingredients').insert({
-            user_id: user.id,
-            raw_ocr_text: inciText,
-            cleaned_ingredient_list: ingredientList,
-            inci_mapped_list: ingredientList.map(name => ({ inci: name, mapped: true })),
-          });
-          toast.success('INCI 데이터가 저장되었습니다.');
+    try {
+      // 1. Supabase products 테이블에 직접 저장
+      const productId = await saveProduct({ ...form, inciText });
+      if (!productId) throw new Error('제품 저장 실패');
+
+      // 2. INCI 데이터 별도 저장
+      if (inciText.trim()) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            const ingredientList = inciText.split(',').map(s => s.trim()).filter(Boolean);
+            await supabase.from('product_ingredients').insert({
+              user_id: user.id,
+              raw_ocr_text: inciText,
+              cleaned_ingredient_list: ingredientList,
+              inci_mapped_list: ingredientList.map(name => ({ inci: name, mapped: true })),
+            });
+          }
+        } catch (err) {
+          console.error('Failed to save INCI to DB:', err);
         }
-      } catch (err) {
-        console.error('Failed to save INCI to DB:', err);
       }
-    }
 
-    setForm({ productName: '', category: '', skuCode: '', hsCode: '', unitPrice: 0, netWeight: 0, qtyPerCarton: 0 });
-    setInciText('');
-    setOpen(false);
+      // 3. DB에서 목록 새로고침 → 로컬 스토어 동기화
+      await loadProducts();
+      toast.success('제품이 저장되었습니다.');
+
+      setForm({ productName: '', category: '', skuCode: '', hsCode: '', unitPrice: 0, netWeight: 0, qtyPerCarton: 0 });
+      setInciText('');
+      setOpen(false);
+    } catch (err) {
+      toast.error('제품 저장에 실패했습니다.');
+      console.error('handleSave error:', err);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -193,7 +210,13 @@ export default function ProductListPage() {
                 )}
                 <Button variant="ghost" size="icon"
                   className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity h-7 w-7 text-destructive"
-                  onClick={() => removeProductEntry(p.id)}
+                  onClick={async () => {
+                    const ok = await deleteProduct(p.id);
+                    if (ok) {
+                      removeProductEntry(p.id);
+                      toast.success('제품이 삭제되었습니다.');
+                    }
+                  }}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
@@ -304,7 +327,9 @@ export default function ProductListPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>취소</Button>
-            <Button onClick={handleSave} disabled={!form.productName || !form.skuCode || !form.category}>저장</Button>
+            <Button onClick={handleSave} disabled={saving || !form.productName || !form.skuCode || !form.category}>
+              {saving ? '저장 중...' : '저장'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
