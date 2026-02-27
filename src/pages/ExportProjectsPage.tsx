@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Plus, FileText, Calendar, Trash2, MoreVertical, ChevronRight, Download, FileDown, History, Clock, Building2, Package, CheckSquare, Square, ChevronLeft } from 'lucide-react';
+import { Plus, FileText, Calendar, Trash2, MoreVertical, ChevronRight, Download, FileDown, History, Clock, Building2, Package, CheckSquare, Square, ChevronLeft, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +12,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { useProjectStore, PIPELINE_STAGES, type PipelineStage, type Project } from '@/stores/projectStore';
+import { useExportProjects, type ExportProject, type ProjectStage } from '@/hooks/useExportProjects';
 import { useBuyers } from '@/hooks/useBuyers';
 import { useAppStore } from '@/stores/appStore';
 import { getBuyerCountryDisplay } from '@/lib/countryFlags';
@@ -20,22 +20,38 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 // ──────────────────────────────────────────────────────────
-// Constants
+// Stage display config
 // ──────────────────────────────────────────────────────────
-const STAGE_COLORS: Record<PipelineStage, string> = {
-  '첫 제안 진행': 'bg-blue-500/10 text-blue-600 border-blue-500/30',
-  '샘플 검토': 'bg-amber-500/10 text-amber-600 border-amber-500/30',
-  '본 오더 및 계약': 'bg-purple-500/10 text-purple-600 border-purple-500/30',
-  '선적 및 통관': 'bg-orange-500/10 text-orange-600 border-orange-500/30',
-  '수출 완료': 'bg-green-500/10 text-green-600 border-green-500/30',
+const STAGES: { key: ProjectStage; label: string }[] = [
+  { key: 'proposal', label: '첫 제안 진행' },
+  { key: 'sample', label: '샘플 검토' },
+  { key: 'order', label: '본 오더 및 계약' },
+  { key: 'shipping', label: '선적 및 통관' },
+  { key: 'done', label: '수출 완료' },
+];
+
+const STAGE_LABEL: Record<ProjectStage, string> = {
+  proposal: '첫 제안 진행',
+  sample: '샘플 검토',
+  order: '본 오더 및 계약',
+  shipping: '선적 및 통관',
+  done: '수출 완료',
 };
 
-const STAGE_HEADER_COLORS: Record<PipelineStage, string> = {
-  '첫 제안 진행': 'bg-blue-500',
-  '샘플 검토': 'bg-amber-500',
-  '본 오더 및 계약': 'bg-purple-500',
-  '선적 및 통관': 'bg-orange-500',
-  '수출 완료': 'bg-green-500',
+const STAGE_COLORS: Record<ProjectStage, string> = {
+  proposal: 'bg-blue-500/10 text-blue-600 border-blue-500/30',
+  sample: 'bg-amber-500/10 text-amber-600 border-amber-500/30',
+  order: 'bg-purple-500/10 text-purple-600 border-purple-500/30',
+  shipping: 'bg-orange-500/10 text-orange-600 border-orange-500/30',
+  done: 'bg-green-500/10 text-green-600 border-green-500/30',
+};
+
+const STAGE_HEADER_COLORS: Record<ProjectStage, string> = {
+  proposal: 'bg-blue-500',
+  sample: 'bg-amber-500',
+  order: 'bg-purple-500',
+  shipping: 'bg-orange-500',
+  done: 'bg-green-500',
 };
 
 // ──────────────────────────────────────────────────────────
@@ -65,16 +81,16 @@ const BULK_TABS: DocTabDef[] = [
   { key: 'pl', label: 'PL (패킹리스트)', emoji: '📦', docType: 'PL' },
 ];
 
-function getTabsForStage(stage: PipelineStage): { active: DocTabDef[]; history: DocTabDef[] } {
+function getTabsForStage(stage: ProjectStage): { active: DocTabDef[]; history: DocTabDef[] } {
   switch (stage) {
-    case '첫 제안 진행':
+    case 'proposal':
       return { active: PROPOSAL_TABS, history: [] };
-    case '샘플 검토':
+    case 'sample':
       return { active: [...PROPOSAL_TABS, ...SAMPLE_TABS], history: [] };
-    case '본 오더 및 계약':
+    case 'order':
       return { active: BULK_TABS, history: [...PROPOSAL_TABS, ...SAMPLE_TABS] };
-    case '선적 및 통관':
-    case '수출 완료':
+    case 'shipping':
+    case 'done':
       return { active: BULK_TABS, history: [...PROPOSAL_TABS, ...SAMPLE_TABS] };
     default:
       return { active: PROPOSAL_TABS, history: [] };
@@ -84,10 +100,10 @@ function getTabsForStage(stage: PipelineStage): { active: DocTabDef[]; history: 
 // ──────────────────────────────────────────────────────────
 // Document HTML generator per type
 // ──────────────────────────────────────────────────────────
-function getDocHtml(type: string, project: Project): string {
+function getDocHtml(type: string, project: ExportProject): string {
   const base = {
     companyName: 'K-Beauty Co., Ltd.',
-    buyerName: 'International Buyer Co.',
+    buyerName: project.buyer_name || 'International Buyer Co.',
     piNumber: `PI-${project.id.slice(-6).toUpperCase()}`,
     date: new Date().toLocaleDateString('en-US'),
   };
@@ -217,20 +233,20 @@ function getDocHtml(type: string, project: Project): string {
 // ──────────────────────────────────────────────────────────
 // Project Detail View (Stage-based Dynamic Tabs)
 // ──────────────────────────────────────────────────────────
-function ProjectDetailView({ project, onBack }: { project: Project; onBack: () => void }) {
+function ProjectDetailView({ project, onBack }: { project: ExportProject; onBack: () => void }) {
   const previewRef = useRef<HTMLDivElement>(null);
   const [downloading, setDownloading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
-  const { active: activeTabs, history: historyTabs } = getTabsForStage(project.pipelineStage);
+  const { active: activeTabs, history: historyTabs } = getTabsForStage(project.stage);
   const [activeTabKey, setActiveTabKey] = useState(activeTabs[0]?.key || 'proposal');
 
   const currentTab = [...activeTabs, ...historyTabs].find(t => t.key === activeTabKey);
   const isHistoryDoc = historyTabs.some(t => t.key === activeTabKey);
 
   // Check if AI-generated doc exists
-  const aiDoc = project.documents?.find(d => d.docKey === currentTab?.docType);
-  const htmlContent = aiDoc ? aiDoc.html : getDocHtml(currentTab?.docType || 'PROPOSAL', project);
+  const aiDoc = project.documents?.find((d: any) => d.docKey === currentTab?.docType);
+  const htmlContent = aiDoc ? (aiDoc as any).html : getDocHtml(currentTab?.docType || 'PROPOSAL', project);
 
   // PDF Download
   const handleDownloadPDF = useCallback(async () => {
@@ -255,7 +271,7 @@ function ProjectDetailView({ project, onBack }: { project: Project; onBack: () =
         pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight);
         heightLeft -= pageHeight;
       }
-      const filename = `${currentTab?.label || 'document'}_${project.name}.pdf`;
+      const filename = `${currentTab?.label || 'document'}_${project.project_name}.pdf`;
       pdf.save(filename.replace(/\s+/g, '_'));
       toast.success('PDF 다운로드 완료');
     } catch (err) {
@@ -264,7 +280,7 @@ function ProjectDetailView({ project, onBack }: { project: Project; onBack: () =
     } finally {
       setDownloading(false);
     }
-  }, [currentTab, project.name]);
+  }, [currentTab, project.project_name]);
 
   // Word Download
   const handleDownloadWord = useCallback(async () => {
@@ -278,7 +294,7 @@ function ProjectDetailView({ project, onBack }: { project: Project; onBack: () =
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const filename = `${currentTab?.label || 'document'}_${project.name}.doc`;
+      const filename = `${currentTab?.label || 'document'}_${project.project_name}.doc`;
       a.download = filename.replace(/\s+/g, '_');
       a.click();
       URL.revokeObjectURL(url);
@@ -289,7 +305,7 @@ function ProjectDetailView({ project, onBack }: { project: Project; onBack: () =
     } finally {
       setDownloading(false);
     }
-  }, [currentTab, project.name]);
+  }, [currentTab, project.project_name]);
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -301,9 +317,9 @@ function ProjectDetailView({ project, onBack }: { project: Project; onBack: () =
             목록으로
           </Button>
           <div className="h-4 w-px bg-border" />
-          <h1 className="text-base font-bold text-foreground truncate flex-1">{project.name}</h1>
-          <Badge variant="outline" className={`text-xs border ${STAGE_COLORS[project.pipelineStage]}`}>
-            {project.pipelineStage}
+          <h1 className="text-base font-bold text-foreground truncate flex-1">{project.project_name}</h1>
+          <Badge variant="outline" className={`text-xs border ${STAGE_COLORS[project.stage]}`}>
+            {STAGE_LABEL[project.stage]}
           </Badge>
         </div>
       </div>
@@ -352,10 +368,10 @@ function ProjectDetailView({ project, onBack }: { project: Project; onBack: () =
           )}
         </div>
 
-        {/* Document Content - single content area for all tabs */}
+        {/* Document Content */}
         {[...activeTabs, ...historyTabs].map(tab => {
-          const tabAiDoc = project.documents?.find(d => d.docKey === tab.docType);
-          const tabHtml = tabAiDoc ? tabAiDoc.html : getDocHtml(tab.docType, project);
+          const tabAiDoc = project.documents?.find((d: any) => d.docKey === tab.docType);
+          const tabHtml = tabAiDoc ? (tabAiDoc as any).html : getDocHtml(tab.docType, project);
           const isHistory = historyTabs.some(h => h.key === tab.key);
 
           return (
@@ -426,11 +442,11 @@ function ProjectDetailView({ project, onBack }: { project: Project; onBack: () =
 // Draggable Project Card
 // ──────────────────────────────────────────────────────────
 interface DraggableCardProps {
-  project: Project;
-  onCardClick: (project: Project) => void;
-  onStageChange: (projectId: string, stage: PipelineStage) => void;
+  project: ExportProject;
+  onCardClick: (project: ExportProject) => void;
+  onStageChange: (projectId: string, stage: ProjectStage) => void;
   onDelete: (projectId: string) => void;
-  currentStage: PipelineStage;
+  currentStage: ProjectStage;
 }
 
 function DraggableCard({ project, onCardClick, onStageChange, onDelete, currentStage }: DraggableCardProps) {
@@ -453,7 +469,7 @@ function DraggableCard({ project, onCardClick, onStageChange, onDelete, currentS
       <CardContent className="p-4">
         <div className="flex items-start justify-between mb-3">
           <h4 className="font-medium text-sm text-foreground line-clamp-2 flex-1 min-w-0">
-            {project.name}
+            {project.project_name}
           </h4>
           <DropdownMenu>
             <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>
@@ -466,16 +482,16 @@ function DraggableCard({ project, onCardClick, onStageChange, onDelete, currentS
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {PIPELINE_STAGES.filter(s => s !== currentStage).map(nextStage => (
+              {STAGES.filter(s => s.key !== currentStage).map(s => (
                 <DropdownMenuItem
-                  key={nextStage}
+                  key={s.key}
                   onClick={e => {
                     e.stopPropagation();
-                    onStageChange(project.id, nextStage);
-                    toast.success(`"${project.name}" → ${nextStage}`);
+                    onStageChange(project.id, s.key);
+                    toast.success(`"${project.project_name}" → ${s.label}`);
                   }}
                 >
-                  {nextStage}(으)로 이동
+                  {s.label}(으)로 이동
                 </DropdownMenuItem>
               ))}
               <DropdownMenuItem
@@ -493,25 +509,21 @@ function DraggableCard({ project, onCardClick, onStageChange, onDelete, currentS
           </DropdownMenu>
         </div>
 
-        <div className="flex flex-wrap gap-1 mb-2">
-          {project.context.targetCountries.slice(0, 3).map(c => (
-            <Badge key={c} variant="outline" className="text-[10px] px-1.5 py-0 h-4">{c}</Badge>
-          ))}
-          {project.context.targetCountries.length > 3 && (
-            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
-              +{project.context.targetCountries.length - 3}
-            </Badge>
-          )}
-        </div>
+        {project.buyer_name && (
+          <div className="flex items-center gap-1 mb-2">
+            <Building2 className="h-3 w-3 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground truncate">{project.buyer_name}</span>
+          </div>
+        )}
 
         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
           <div className="flex items-center gap-1">
             <FileText className="h-3 w-3" />
-            {project.documents.length}개 문서
+            {(project.documents || []).length}개 문서
           </div>
           <div className="flex items-center gap-1">
             <Calendar className="h-3 w-3" />
-            {new Date(project.updatedAt).toLocaleDateString('ko-KR')}
+            {new Date(project.updated_at).toLocaleDateString('ko-KR')}
           </div>
         </div>
       </CardContent>
@@ -523,14 +535,15 @@ function DraggableCard({ project, onCardClick, onStageChange, onDelete, currentS
 // Drop Column
 // ──────────────────────────────────────────────────────────
 interface DropColumnProps {
-  stage: PipelineStage;
-  projects: Project[];
-  onCardClick: (project: Project) => void;
-  onStageChange: (projectId: string, stage: PipelineStage) => void;
+  stage: ProjectStage;
+  stageLabel: string;
+  projects: ExportProject[];
+  onCardClick: (project: ExportProject) => void;
+  onStageChange: (projectId: string, stage: ProjectStage) => void;
   onDelete: (projectId: string) => void;
 }
 
-function DropColumn({ stage, projects, onCardClick, onStageChange, onDelete }: DropColumnProps) {
+function DropColumn({ stage, stageLabel, projects, onCardClick, onStageChange, onDelete }: DropColumnProps) {
   const [isDragOver, setIsDragOver] = useState(false);
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -540,7 +553,6 @@ function DropColumn({ stage, projects, onCardClick, onStageChange, onDelete }: D
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
-    // Only clear if leaving the column entirely (not entering a child)
     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
       setIsDragOver(false);
     }
@@ -552,7 +564,7 @@ function DropColumn({ stage, projects, onCardClick, onStageChange, onDelete }: D
     const projectId = e.dataTransfer.getData('projectId');
     if (projectId) {
       onStageChange(projectId, stage);
-      toast.success(`프로젝트가 "${stage}"(으)로 이동되었습니다.`);
+      toast.success(`프로젝트가 "${stageLabel}"(으)로 이동되었습니다.`);
     }
   };
 
@@ -562,7 +574,7 @@ function DropColumn({ stage, projects, onCardClick, onStageChange, onDelete }: D
       <div className="flex-shrink-0 mb-3">
         <div className={`h-1 rounded-full mb-2 ${STAGE_HEADER_COLORS[stage]}`} />
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-foreground truncate">{stage}</h3>
+          <h3 className="text-sm font-semibold text-foreground truncate">{stageLabel}</h3>
           <Badge variant="secondary" className="text-xs ml-2 flex-shrink-0">
             {projects.length}
           </Badge>
@@ -598,7 +610,6 @@ function DropColumn({ stage, projects, onCardClick, onStageChange, onDelete }: D
             isDragOver ? 'opacity-0' : 'opacity-100'
           )}>
             <p className="text-xs text-muted-foreground">프로젝트 없음</p>
-            {isDragOver && <p className="text-xs text-primary mt-1">여기에 놓으세요</p>}
           </div>
         )}
 
@@ -620,7 +631,7 @@ interface WizardState {
   buyerId: string;
   buyerName: string;
   selectedProductIds: string[];
-  stage: PipelineStage;
+  stage: ProjectStage;
   customName: string;
 }
 
@@ -629,13 +640,13 @@ const WIZARD_INITIAL: WizardState = {
   buyerId: '',
   buyerName: '',
   selectedProductIds: [],
-  stage: '첫 제안 진행',
+  stage: 'proposal',
   customName: '',
 };
 
 function CreateProjectWizard({ onClose, onCreate }: {
   onClose: () => void;
-  onCreate: (name: string, stage: PipelineStage) => void;
+  onCreate: (name: string, stage: ProjectStage, buyerId: string, buyerName: string, productIds: string[]) => void;
 }) {
   const { buyers } = useBuyers();
   const { productEntries } = useAppStore();
@@ -658,7 +669,7 @@ function CreateProjectWizard({ onClose, onCreate }: {
 
   const handleFinish = () => {
     if (!finalName) { toast.error('프로젝트 이름을 입력해주세요.'); return; }
-    onCreate(finalName, wizard.stage);
+    onCreate(finalName, wizard.stage, wizard.buyerId, wizard.buyerName, wizard.selectedProductIds);
   };
 
   const stepTitles = ['① 바이어 선택', '② 제품 선택', '③ 단계 설정'];
@@ -728,7 +739,6 @@ function CreateProjectWizard({ onClose, onCreate }: {
               </div>
             </ScrollArea>
           )}
-          {/* Skip option */}
           <p className="text-xs text-muted-foreground text-center">
             바이어 없이 진행하려면{' '}
             <button
@@ -793,19 +803,19 @@ function CreateProjectWizard({ onClose, onCreate }: {
           <div className="space-y-2">
             <p className="text-sm font-medium">시작 단계 선택</p>
             <div className="grid grid-cols-1 gap-2">
-              {PIPELINE_STAGES.map(stage => (
+              {STAGES.map(s => (
                 <div
-                  key={stage}
+                  key={s.key}
                   className={cn(
                     'flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all text-sm',
-                    wizard.stage === stage
+                    wizard.stage === s.key
                       ? 'border-primary bg-primary/5 text-primary font-medium'
                       : 'border-border hover:border-primary/30 hover:bg-muted/30'
                   )}
-                  onClick={() => setWizard(w => ({ ...w, stage }))}
+                  onClick={() => setWizard(w => ({ ...w, stage: s.key }))}
                 >
-                  <div className={cn('w-2 h-2 rounded-full flex-shrink-0', STAGE_HEADER_COLORS[stage])} />
-                  {stage}
+                  <div className={cn('w-2 h-2 rounded-full flex-shrink-0', STAGE_HEADER_COLORS[s.key])} />
+                  {s.label}
                 </div>
               ))}
             </div>
@@ -857,25 +867,41 @@ function CreateProjectWizard({ onClose, onCreate }: {
 // Main Export Projects Page
 // ──────────────────────────────────────────────────────────
 export default function ExportProjectsPage() {
-  const { projects, createProject, setActiveProject, deleteProject, updateProjectStage } = useProjectStore();
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const { projects, loading, createProject, updateStage, deleteProject, byStage } = useExportProjects();
+  const [selectedProject, setSelectedProject] = useState<ExportProject | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [creating, setCreating] = useState(false);
 
-  const handleCreateProject = (name: string, stage: PipelineStage) => {
-    const id = createProject(name);
-    updateProjectStage(id, stage);
-    setActiveProject(id);
-    setShowCreateDialog(false);
-    toast.success('새 프로젝트가 생성되었습니다.');
+  const handleCreateProject = async (
+    name: string,
+    stage: ProjectStage,
+    buyerId: string,
+    buyerName: string,
+    productIds: string[],
+  ) => {
+    setCreating(true);
+    const result = await createProject({
+      project_name: name,
+      stage,
+      buyer_id: buyerId || undefined,
+      buyer_name: buyerName || undefined,
+      products: productIds.map(id => ({ id })),
+    });
+    setCreating(false);
+    if (result) {
+      setShowCreateDialog(false);
+      toast.success('새 프로젝트가 생성되었습니다.');
+    } else {
+      toast.error('프로젝트 생성에 실패했습니다.');
+    }
   };
 
-  const handleCardClick = (project: Project) => {
-    setActiveProject(project.id);
+  const handleCardClick = (project: ExportProject) => {
     setSelectedProject(project);
   };
 
-  const handleStageChange = (projectId: string, stage: PipelineStage) => {
-    updateProjectStage(projectId, stage);
+  const handleStageChange = (projectId: string, stage: ProjectStage) => {
+    updateStage(projectId, stage);
   };
 
   const handleDelete = (projectId: string) => {
@@ -898,32 +924,39 @@ export default function ExportProjectsPage() {
               카드를 드래그해서 단계를 변경하거나, 클릭해서 문서를 관리하세요.
             </p>
           </div>
-          <Button onClick={() => setShowCreateDialog(true)} className="gap-2">
-            <Plus className="h-4 w-4" /> 새 프로젝트
+          <Button onClick={() => setShowCreateDialog(true)} className="gap-2" disabled={creating}>
+            {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            새 프로젝트
           </Button>
         </div>
       </div>
 
-      {/* Kanban Board with Drag & Drop */}
-      <div className="flex-1 overflow-x-auto overflow-y-hidden">
-        <div className="flex h-full gap-4 p-4 min-w-max">
-          {PIPELINE_STAGES.map(stage => {
-            const stageProjects = projects.filter(
-              p => (p.pipelineStage || '첫 제안 진행') === stage
-            );
-            return (
-              <DropColumn
-                key={stage}
-                stage={stage}
-                projects={stageProjects}
-                onCardClick={handleCardClick}
-                onStageChange={handleStageChange}
-                onDelete={handleDelete}
-              />
-            );
-          })}
+      {/* Loading */}
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
-      </div>
+      ) : (
+        /* Kanban Board with Drag & Drop */
+        <div className="flex-1 overflow-x-auto overflow-y-hidden">
+          <div className="flex h-full gap-4 p-4 min-w-max">
+            {STAGES.map(s => {
+              const stageProjects = byStage(s.key);
+              return (
+                <DropColumn
+                  key={s.key}
+                  stage={s.key}
+                  stageLabel={s.label}
+                  projects={stageProjects}
+                  onCardClick={handleCardClick}
+                  onStageChange={handleStageChange}
+                  onDelete={handleDelete}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 3-Step Create Dialog */}
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
