@@ -11,13 +11,19 @@ const MAX_AGENTIC_LOOPS = 5;
 function buildSystemPrompt(ctx: any): string {
   const seller = ctx.seller
     ? `회사명: ${ctx.seller.company_name}
-주소: ${ctx.seller.address || '미등록'}
-Tel: ${ctx.seller.tel || '미등록'}
-Email: ${ctx.seller.email || '미등록'}
-담당자: ${ctx.seller.contact_person || '미등록'}
-사업자번호: ${ctx.seller.business_no || '미등록'}
-은행: ${(ctx.seller.bank_info as any)?.bank_name || '미등록'} / 계좌: ${(ctx.seller.bank_info as any)?.account_no || '미등록'} / SWIFT: ${(ctx.seller.bank_info as any)?.swift_code || '미등록'}`
-    : "미등록 - 반드시 설정 페이지에서 회사 정보 등록 안내";
+대표자: ${ctx.seller.ceo_name || "미등록"}
+사업자번호: ${ctx.seller.business_no || "미등록"}
+관세부호: ${ctx.seller.customs_code || "미등록"}
+주소: ${ctx.seller.address || "미등록"}
+담당자: ${ctx.seller.contact_person || "미등록"}
+Tel: ${ctx.seller.tel || "미등록"}
+Email: ${ctx.seller.email || "미등록"}
+은행: ${ctx.seller.bank_info?.bank_name || "미등록"}
+계좌: ${ctx.seller.bank_info?.account_no || "미등록"}
+SWIFT: ${ctx.seller.bank_info?.swift_code || "미등록"}
+로고: ${ctx.seller.logo_url ? "등록됨" : "미등록"}
+직인: ${ctx.seller.seal_url ? "등록됨" : "미등록"}`
+    : "판매자 미등록 → 설정 페이지에서 회사 정보 등록 안내";
 
   const buyers = ctx.buyers?.length
     ? ctx.buyers.map((b: any, i: number) =>
@@ -240,22 +246,50 @@ const TOOLS: Anthropic.Messages.Tool[] = [
 
 async function fetchUserContext(userId: string) {
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-  const [companyRes, profileRes, buyersRes, productsRes] = await Promise.all([
-    sb.from("companies").select("company_name,address,tel,email,contact_name,business_no,bank_info,customs_code,ceo_name,logo_url,seal_url").eq("user_id",userId).maybeSingle(),
-    sb.from("profiles").select("company_info,full_name,email").eq("id",userId).maybeSingle(),
-    sb.from("buyers").select("company_name,country,contact_name,contact_email,contact_phone,buyer_type,channel").eq("user_id",userId).limit(20),
-    sb.from("products").select("name_en,name_kr,sku_code,hs_code,unit_price_range,moq,category").eq("user_id",userId).limit(30),
+
+  const [companyRes, buyersRes, productsRes] = await Promise.all([
+    sb.from("companies")
+      .select("company_name,ceo_name,address,tel,email,contact_name,business_no,customs_code,bank_info,logo_url,seal_url")
+      .eq("user_id", userId)
+      .maybeSingle(),
+    sb.from("buyers")
+      .select("company_name,country,contact_name,contact_email,contact_phone,buyer_type,channel")
+      .eq("user_id", userId)
+      .limit(20),
+    sb.from("products")
+      .select("name_en,name_kr,sku_code,hs_code,unit_price_range,moq,category")
+      .eq("user_id", userId)
+      .limit(30),
   ]);
 
   let seller = null;
   if (companyRes.data) {
-    const cd = companyRes.data as any;
-    seller = { company_name:cd.company_name, address:cd.address, tel:cd.tel, email:cd.email, contact_person:cd.contact_name, business_no:cd.business_no, bank_info:cd.bank_info, customs_code:cd.customs_code, ceo_name:cd.ceo_name, logo_url:cd.logo_url, seal_url:cd.seal_url };
-  } else if (profileRes.data?.company_info) {
-    const ci = profileRes.data.company_info as any;
-    seller = { company_name:ci.company_name||ci.companyName||profileRes.data.full_name||"미등록", address:ci.address, tel:ci.tel||ci.phone, email:ci.email||profileRes.data.email, contact_person:ci.contact_person||ci.contactPerson, business_no:ci.business_no, bank_info:ci.bank_info };
+    const d = companyRes.data as any;
+    const bank = d.bank_info || {};
+    seller = {
+      company_name: d.company_name || "",
+      ceo_name: d.ceo_name || "",
+      address: d.address || "",
+      tel: d.tel || "",
+      email: d.email || "",
+      contact_person: d.contact_name || "",
+      business_no: d.business_no || "",
+      customs_code: d.customs_code || "",
+      logo_url: d.logo_url || "",
+      seal_url: d.seal_url || "",
+      bank_info: {
+        bank_name: bank.bank_name || "",
+        account_no: bank.account_no || "",
+        swift_code: bank.swift_code || "",
+      },
+    };
   }
-  return { seller, buyers: buyersRes.data||[], products: productsRes.data||[] };
+
+  return {
+    seller,
+    buyers: buyersRes.data || [],
+    products: productsRes.data || [],
+  };
 }
 
 function trimHistory(messages: any[], hasFile: boolean) {
