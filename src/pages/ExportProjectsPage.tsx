@@ -516,6 +516,21 @@ function DraggableCard({ project, onCardClick, onStageChange, onDelete, currentS
           </div>
         )}
 
+        {/* 저장된 문서 타입 배지 */}
+        {(project.documents || []).length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-2">
+            {(project.documents || []).map((doc: any, idx: number) => (
+              <Badge
+                key={idx}
+                variant="outline"
+                className="text-[9px] px-1.5 py-0 h-4 border-primary/30 text-primary bg-primary/5"
+              >
+                {doc.doc_type || doc.docKey || '문서'}
+              </Badge>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
           <div className="flex items-center gap-1">
             <FileText className="h-3 w-3" />

@@ -6,6 +6,8 @@ import { Loader2 } from "lucide-react";
 import { useTradeStore } from "../../stores/tradeStore";
 import type { TradeDocument, ComplianceResult as TradeComplianceResult } from "../../stores/tradeStore";
 import { CrossCheckPanel } from "../CrossCheckPanel";
+import { useExportProjects } from "../../hooks/useExportProjects";
+import { saveDocumentToProject, type SavedDocument } from "../../hooks/useDocumentSave";
 
 type DocumentType = TradeDocument["document_type"] | "COMPLIANCE" | null;
 
@@ -253,6 +255,12 @@ export default function RightPanel() {
   const [editedArgs, setEditedArgs] = useState<Record<string, unknown> | null>(null);
   const originalArgsRef = useRef<Record<string, unknown> | null>(null);
 
+  // 프로젝트 저장 관련
+  const { projects } = useExportProjects();
+  const [showProjectSelect, setShowProjectSelect] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedProject, setSavedProject] = useState<string | null>(null);
+
   if (!rightPanelOpen) return null;
 
   const isStreaming = streamPhase === "tool_call_start" || streamPhase === "tool_call_streaming";
@@ -339,6 +347,32 @@ export default function RightPanel() {
       toast.error(`다운로드 실패: ${(e as Error).message}`);
     } finally {
       setDocxLoading(false);
+    }
+  };
+
+  const handleSaveToProject = async (projectId: string, projectName: string) => {
+    setSaving(true);
+    try {
+      const args = docArgs as Record<string, unknown>;
+      const doc: SavedDocument = {
+        id: crypto.randomUUID(),
+        doc_type: (rightPanelDocType || "PI") as SavedDocument["doc_type"],
+        doc_number: (args.document_number as string) || `${rightPanelDocType}-${Date.now()}`,
+        created_at: new Date().toISOString(),
+        data: args,
+      };
+      const ok = await saveDocumentToProject(projectId, doc);
+      if (ok) {
+        setSavedProject(projectName);
+        setShowProjectSelect(false);
+        toast.success(`"${projectName}" 프로젝트에 저장 완료`);
+      } else {
+        toast.error("저장에 실패했습니다.");
+      }
+    } catch {
+      toast.error("저장 중 오류 발생");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -485,6 +519,48 @@ export default function RightPanel() {
               완료
             </button>
           )}
+          {/* 프로젝트에 저장 */}
+          <div className="relative">
+            <button
+              onClick={() => setShowProjectSelect(!showProjectSelect)}
+              disabled={saving || editMode}
+              className="py-2 px-3 bg-emerald-600 text-white text-sm font-medium rounded-lg hover:bg-emerald-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+            >
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "📁"}
+              저장
+            </button>
+            {showProjectSelect && (
+              <div className="absolute bottom-full mb-2 right-0 w-56 bg-white border border-gray-200 rounded-lg shadow-xl z-50 max-h-48 overflow-y-auto">
+                <div className="px-3 py-2 border-b border-gray-100 text-xs font-semibold text-gray-500">
+                  프로젝트 선택
+                </div>
+                {projects.length === 0 ? (
+                  <div className="px-3 py-4 text-xs text-gray-400 text-center">
+                    프로젝트가 없습니다
+                  </div>
+                ) : (
+                  projects.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => handleSaveToProject(p.id, p.project_name)}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-b-0"
+                    >
+                      <span className="font-medium text-gray-800">{p.project_name}</span>
+                      {p.buyer_name && (
+                        <span className="block text-[10px] text-gray-400">{p.buyer_name}</span>
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {/* 저장 완료 메시지 */}
+      {savedProject && (
+        <div className="px-5 py-2 bg-emerald-50 border-t border-emerald-200 text-xs text-emerald-700 flex items-center gap-1.5">
+          ✅ "{savedProject}" 프로젝트에 저장됨
         </div>
       )}
     </div>
