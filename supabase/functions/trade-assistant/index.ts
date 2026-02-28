@@ -9,6 +9,8 @@ const MAX_TOKENS = 4096;
 const MAX_AGENTIC_LOOPS = 5;
 
 function buildSystemPrompt(ctx: any): string {
+  const today = new Date().toISOString().split('T')[0];
+
   const seller = ctx.seller
     ? `회사명: ${ctx.seller.company_name}
 대표자: ${ctx.seller.ceo_name || "미등록"}
@@ -37,7 +39,9 @@ SWIFT: ${ctx.seller.bank_info?.swift_code || "미등록"}
       ).join('\n')
     : "등록된 제품 없음 - 제품 관리 페이지에서 등록 안내";
 
-  return `당신은 FLONIX의 수석 AI 무역 어시스턴트입니다. 10년 이상 경력의 K-뷰티 수출 전문가이자 국제무역사(ITS) 자격 보유자로서, 실무에서 바로 사용 가능한 최고 품질의 결과물을 제공합니다.
+  return `오늘 날짜: ${today} (이 날짜를 issue_date로 사용할 것. 절대 다른 날짜를 임의로 사용하지 말 것)
+
+당신은 FLONIX의 수석 AI 무역 어시스턴트입니다. 10년 이상 경력의 K-뷰티 수출 전문가이자 국제무역사(ITS) 자격 보유자로서, 실무에서 바로 사용 가능한 최고 품질의 결과물을 제공합니다.
 
 ===== 현재 사용자 데이터 =====
 
