@@ -4,7 +4,7 @@
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   WidthType, HeadingLevel, AlignmentType, convertMillimetersToTwip,
-  BorderStyle, ShadingType, TableLayoutType,
+  BorderStyle, ShadingType, TableLayoutType, VerticalAlign,
 } from 'docx';
 import { saveAs } from 'file-saver';
 
@@ -763,7 +763,7 @@ function buildProposalDOCX(args: ProposalArgs): Document {
   });
 }
 
-// ─── 무역 서류 DOCX (PDF 동일 레이아웃) ──────────────────────────────────────
+// ─── 무역 서류 DOCX (PDF 동일 레이아웃 — 완전 재작성) ─────────────────────────
 function buildTradeDocDOCX(args: TradeDocArgs, docType: string): Document {
   const title = DOC_TITLE[docType] ?? docType;
   const items = args.items ?? [];
@@ -771,352 +771,327 @@ function buildTradeDocDOCX(args: TradeDocArgs, docType: string): Document {
   const total = items.reduce((s, i) => s + (i.quantity ?? 0) * (i.unit_price ?? 0), 0);
   const isPL = docType === 'PL';
 
-  const noBorder = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
-  const thinBorder = { style: BorderStyle.SINGLE, size: 1, color: 'BBBBBB' };
-  const grayShading = { type: ShadingType.SOLID, color: 'F4F4F4', fill: 'F4F4F4' };
-  const lightGrayShading = { type: ShadingType.SOLID, color: 'F9F9F9', fill: 'F9F9F9' };
+  // ── 색상 & 테두리 상수 ──
+  const DARK = '111827';
+  const LIGHT_GRAY = 'F3F4F6';
+  const HEADER_BG = '1F2937';
+  const TOTAL_BG = 'F9FAFB';
+  const VIOLET = '7C3AED';
+  const BLUE_LINK = '2563EB';
+  const LABEL_GRAY = '6B7280';
+  const TEXT_GRAY = '444444';
+  const MUTED = '9CA3AF';
+  const SEAL_GRAY = 'D1D5DB';
+  const FONT = 'Arial';
 
-  // Helper: 셀 내 텍스트 줄 생성
-  const textCell = (text: string, opts?: { bold?: boolean; color?: string; alignment?: (typeof AlignmentType)[keyof typeof AlignmentType]; width?: number; shading?: any }) =>
-    new TableCell({
-      ...(opts?.width ? { width: { size: opts.width, type: WidthType.PERCENTAGE } } : {}),
-      ...(opts?.shading ? { shading: opts.shading } : {}),
-      children: [
-        new Paragraph({
-          children: [new TextRun({ text, bold: opts?.bold, color: opts?.color, size: 20 })],
-          alignment: opts?.alignment ?? AlignmentType.LEFT,
-        }),
-      ],
+  const NO_BORDER = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+  const THIN_BORDER = { style: BorderStyle.SINGLE, size: 1, color: 'E5E7EB' };
+  const DARK_BOTTOM = { style: BorderStyle.SINGLE, size: 2, color: DARK };
+  const ALL_NO = { top: NO_BORDER, bottom: NO_BORDER, left: NO_BORDER, right: NO_BORDER };
+  const ALL_THIN = { top: THIN_BORDER, bottom: THIN_BORDER, left: THIN_BORDER, right: THIN_BORDER };
+
+  // ── Helper ──
+  const p = (text: string, opts?: { bold?: boolean; color?: string; size?: number; font?: string; alignment?: (typeof AlignmentType)[keyof typeof AlignmentType]; spacing?: { before?: number; after?: number }; allCaps?: boolean }) =>
+    new Paragraph({
+      children: [new TextRun({ text, bold: opts?.bold, color: opts?.color, size: opts?.size ?? 20, font: opts?.font ?? FONT, allCaps: opts?.allCaps })],
+      alignment: opts?.alignment,
+      spacing: opts?.spacing,
     });
 
-  // ── 1. 문서 제목 + 문서번호/날짜 ──
-  const titleSection: (Paragraph | Table)[] = [
-    new Paragraph({
-      children: [new TextRun({ text: title, bold: true, size: 36 })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 120 },
-    }),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder, insideHorizontal: noBorder, insideVertical: noBorder },
-      rows: [
-        new TableRow({
-          children: [
-            new TableCell({
-              width: { size: 50, type: WidthType.PERCENTAGE },
-              borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder },
-              children: [new Paragraph({ children: [new TextRun({ text: `No: ${args.document_number ?? '—'}`, color: '555555', size: 20 })] })],
-            }),
-            new TableCell({
-              width: { size: 50, type: WidthType.PERCENTAGE },
-              borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder },
-              children: [new Paragraph({ children: [new TextRun({ text: `Date: ${args.issue_date ?? new Date().toISOString().slice(0, 10)}`, color: '555555', size: 20 })], alignment: AlignmentType.RIGHT })],
-            }),
-          ],
-        }),
-      ],
-    }),
-    new Paragraph({ text: '', spacing: { after: 80 } }),
-  ];
+  const cell = (children: Paragraph[], opts?: { width?: number; borders?: any; shading?: any; columnSpan?: number; verticalAlign?: (typeof VerticalAlign)[keyof typeof VerticalAlign] }) =>
+    new TableCell({
+      ...(opts?.width ? { width: { size: opts.width, type: WidthType.PERCENTAGE } } : {}),
+      ...(opts?.borders ? { borders: opts.borders } : {}),
+      ...(opts?.shading ? { shading: opts.shading } : {}),
+      ...(opts?.columnSpan ? { columnSpan: opts.columnSpan } : {}),
+      ...(opts?.verticalAlign ? { verticalAlign: opts.verticalAlign } : {}),
+      children,
+    });
 
-  // ── 2. SELLER / BUYER 2컬럼 테이블 ──
-  const sellerLines = [
-    args.seller?.company_name ?? '—',
-    args.seller?.address,
-    args.seller?.contact_person,
-    args.seller?.email,
-    args.seller?.phone,
-  ].filter(Boolean) as string[];
+  // ══════════════════════════════════════════════════════════════════
+  // 1. 제목: 중앙 정렬, 굵게
+  // ══════════════════════════════════════════════════════════════════
+  const titlePara = new Paragraph({
+    children: [new TextRun({ text: title, bold: true, size: 36, color: DARK, font: FONT })],
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 200 },
+  });
 
-  const buyerLines = [
-    args.buyer?.company_name ?? '—',
-    args.buyer?.address,
-    args.buyer?.country,
-    args.buyer?.contact_person,
-    args.buyer?.email,
-  ].filter(Boolean) as string[];
-
-  const partiesTable = new Table({
+  // ══════════════════════════════════════════════════════════════════
+  // 2. 문서번호 / 날짜 — 좌우 배치, 하단 굵은 선
+  // ══════════════════════════════════════════════════════════════════
+  const docInfoTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: { top: NO_BORDER, bottom: DARK_BOTTOM, left: NO_BORDER, right: NO_BORDER, insideHorizontal: NO_BORDER, insideVertical: NO_BORDER },
     rows: [
       new TableRow({
         children: [
-          new TableCell({
-            width: { size: 50, type: WidthType.PERCENTAGE },
-            borders: { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder },
-            children: [
-              new Paragraph({ children: [new TextRun({ text: 'SELLER / EXPORTER', bold: true, color: '777777', size: 16 })], spacing: { after: 60 } }),
-              ...sellerLines.map((line, i) =>
-                new Paragraph({
-                  children: [new TextRun({ text: line, bold: i === 0, size: 20, ...(line.includes('@') ? { color: '2563EB' } : {}) })],
-                  spacing: { after: 20 },
-                }),
-              ),
-            ],
-          }),
-          new TableCell({
-            width: { size: 50, type: WidthType.PERCENTAGE },
-            borders: { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder },
-            children: [
-              new Paragraph({ children: [new TextRun({ text: 'BUYER / IMPORTER', bold: true, color: '777777', size: 16 })], spacing: { after: 60 } }),
-              ...buyerLines.map((line, i) =>
-                new Paragraph({
-                  children: [new TextRun({ text: line, bold: i === 0, size: 20, ...(line.includes('@') ? { color: '2563EB' } : {}) })],
-                  spacing: { after: 20 },
-                }),
-              ),
-            ],
-          }),
+          cell(
+            [new Paragraph({ children: [new TextRun({ text: `No: ${args.document_number ?? '—'}`, size: 18, font: FONT })] })],
+            { width: 50, borders: ALL_NO },
+          ),
+          cell(
+            [new Paragraph({ children: [new TextRun({ text: `Date: ${args.issue_date ?? new Date().toISOString().slice(0, 10)}`, size: 18, font: FONT })], alignment: AlignmentType.RIGHT })],
+            { width: 50, borders: ALL_NO },
+          ),
         ],
       }),
     ],
   });
 
-  // ── 3. 품목 테이블 ──
-  const itemHeaders = isPL
-    ? ['No', 'Description', 'HS Code', 'Qty', 'Unit Price', 'Amount', 'N/W (kg)', 'G/W (kg)', 'CBM']
-    : ['No', 'Description', 'HS Code', 'Qty', 'Unit Price', 'Amount'];
+  // ══════════════════════════════════════════════════════════════════
+  // 3. SELLER / BUYER 2컬럼 테이블 — 배경색 포함
+  // ══════════════════════════════════════════════════════════════════
+  const sellerParas: Paragraph[] = [
+    new Paragraph({ children: [new TextRun({ text: 'SELLER / EXPORTER', bold: true, size: 14, color: LABEL_GRAY, font: FONT, allCaps: true })], spacing: { after: 60 } }),
+    new Paragraph({ children: [new TextRun({ text: args.seller?.company_name ?? '—', bold: true, size: 20, font: FONT })], spacing: { after: 30 } }),
+  ];
+  if (args.seller?.address) sellerParas.push(p(args.seller.address, { size: 16, color: TEXT_GRAY }));
+  if (args.seller?.contact_person) sellerParas.push(p(args.seller.contact_person, { size: 16, color: TEXT_GRAY }));
+  if (args.seller?.email) sellerParas.push(p(args.seller.email, { size: 16, color: BLUE_LINK }));
+  if (args.seller?.phone) sellerParas.push(p(args.seller.phone, { size: 16, color: TEXT_GRAY }));
+
+  const buyerParas: Paragraph[] = [
+    new Paragraph({ children: [new TextRun({ text: 'BUYER / IMPORTER', bold: true, size: 14, color: LABEL_GRAY, font: FONT, allCaps: true })], spacing: { after: 60 } }),
+    new Paragraph({ children: [new TextRun({ text: args.buyer?.company_name ?? '—', bold: true, size: 20, font: FONT })], spacing: { after: 30 } }),
+  ];
+  if (args.buyer?.address) buyerParas.push(p(args.buyer.address, { size: 16, color: TEXT_GRAY }));
+  if (args.buyer?.country) buyerParas.push(p(args.buyer.country, { size: 16, color: TEXT_GRAY }));
+  if (args.buyer?.contact_person) buyerParas.push(p(args.buyer.contact_person, { size: 16, color: TEXT_GRAY }));
+  if (args.buyer?.email) buyerParas.push(p(args.buyer.email, { size: 16, color: BLUE_LINK }));
+
+  const partiesTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: { top: THIN_BORDER, bottom: THIN_BORDER, left: THIN_BORDER, right: THIN_BORDER, insideHorizontal: THIN_BORDER, insideVertical: THIN_BORDER },
+    rows: [
+      new TableRow({
+        children: [
+          cell(sellerParas, { width: 50, shading: { type: ShadingType.CLEAR, fill: LIGHT_GRAY, color: LIGHT_GRAY } }),
+          cell(buyerParas, { width: 50 }),
+        ],
+      }),
+    ],
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  // 4. 품목 테이블 — 진한 헤더 + 회색 TOTAL
+  // ══════════════════════════════════════════════════════════════════
+  const baseHeaders = ['NO', 'DESCRIPTION', 'HS CODE', 'QTY', 'UNIT PRICE', 'AMOUNT'];
+  const plHeaders = [...baseHeaders, 'N/W (kg)', 'G/W (kg)', 'CBM'];
+  const headers = isPL ? plHeaders : baseHeaders;
 
   const itemHeaderRow = new TableRow({
     tableHeader: true,
-    children: itemHeaders.map((h) =>
+    children: headers.map((h, idx) =>
       new TableCell({
-        shading: grayShading,
+        shading: { type: ShadingType.CLEAR, fill: HEADER_BG, color: HEADER_BG },
         children: [
           new Paragraph({
-            children: [new TextRun({ text: h, bold: true, size: 18 })],
-            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: h, bold: true, size: 16, color: 'FFFFFF', font: FONT })],
+            alignment: idx >= 3 ? AlignmentType.RIGHT : (idx === 0 ? AlignmentType.CENTER : AlignmentType.LEFT),
           }),
         ],
       }),
     ),
   });
 
-  const itemDataRows = items.map(
-    (item, i) =>
-      new TableRow({
-        children: [
-          textCell(String(i + 1), { alignment: AlignmentType.CENTER }),
-          new TableCell({
-            children: [new Paragraph({ children: [new TextRun({ text: item.product_name ?? '—', bold: true, size: 20 })] })],
-          }),
-          textCell(item.hs_code ?? '—', { alignment: AlignmentType.CENTER }),
-          textCell(item.quantity?.toLocaleString() ?? '—', { alignment: AlignmentType.RIGHT }),
-          textCell(
-            item.unit_price != null ? `${item.currency ?? 'USD'} ${item.unit_price.toFixed(2)}` : '—',
-            { alignment: AlignmentType.RIGHT },
-          ),
-          new TableCell({
-            children: [
-              new Paragraph({
-                children: [
-                  new TextRun({
-                    text:
-                      item.quantity != null && item.unit_price != null
-                        ? `${item.currency ?? 'USD'} ${(item.quantity * item.unit_price).toFixed(2)}`
-                        : '—',
-                    bold: true,
-                    size: 20,
-                  }),
-                ],
-                alignment: AlignmentType.RIGHT,
-              }),
-            ],
-          }),
-          ...(isPL
-            ? [
-                textCell(item.net_weight_kg?.toFixed(2) ?? '—', { alignment: AlignmentType.RIGHT }),
-                textCell(item.gross_weight_kg?.toFixed(2) ?? '—', { alignment: AlignmentType.RIGHT }),
-                textCell(item.cbm?.toFixed(4) ?? '—', { alignment: AlignmentType.RIGHT }),
-              ]
-            : []),
-        ],
-      }),
+  const itemDataRows = items.map((item, idx) =>
+    new TableRow({
+      children: [
+        cell([p(String(idx + 1), { size: 16, alignment: AlignmentType.CENTER })]),
+        cell([new Paragraph({ children: [new TextRun({ text: item.product_name ?? '—', bold: true, size: 16, font: FONT })] })]),
+        cell([p(item.hs_code ?? '—', { size: 16, alignment: AlignmentType.CENTER })]),
+        cell([p(item.quantity?.toLocaleString() ?? '—', { size: 16, alignment: AlignmentType.RIGHT })]),
+        cell([p(
+          item.unit_price != null ? `${item.currency ?? 'USD'} ${item.unit_price.toFixed(2)}` : '—',
+          { size: 16, alignment: AlignmentType.RIGHT },
+        )]),
+        cell([new Paragraph({
+          children: [new TextRun({
+            text: item.quantity != null && item.unit_price != null
+              ? `${item.currency ?? 'USD'} ${(item.quantity * item.unit_price).toFixed(2)}`
+              : '—',
+            bold: true, size: 16, font: FONT,
+          })],
+          alignment: AlignmentType.RIGHT,
+        })]),
+        ...(isPL ? [
+          cell([p(item.net_weight_kg?.toFixed(2) ?? '—', { size: 16, alignment: AlignmentType.RIGHT })]),
+          cell([p(item.gross_weight_kg?.toFixed(2) ?? '—', { size: 16, alignment: AlignmentType.RIGHT })]),
+          cell([p(item.cbm?.toFixed(4) ?? '—', { size: 16, alignment: AlignmentType.RIGHT })]),
+        ] : []),
+      ],
+    }),
   );
 
   const totalColSpan = isPL ? 8 : 5;
-  const totalDataRow =
-    items.length > 0
-      ? [
-          new TableRow({
-            children: [
-              new TableCell({
-                columnSpan: totalColSpan,
-                shading: lightGrayShading,
-                children: [
-                  new Paragraph({
-                    children: [new TextRun({ text: 'TOTAL', bold: true, size: 20 })],
-                    alignment: AlignmentType.RIGHT,
-                  }),
-                ],
-              }),
-              new TableCell({
-                shading: lightGrayShading,
-                children: [
-                  new Paragraph({
-                    children: [new TextRun({ text: `${currency} ${total.toFixed(2)}`, bold: true, color: '1D4ED8', size: 20 })],
-                    alignment: AlignmentType.RIGHT,
-                  }),
-                ],
-              }),
-            ],
-          }),
-        ]
-      : [];
+  const totalDataRows = items.length > 0 ? [
+    new TableRow({
+      children: [
+        cell(
+          [new Paragraph({ children: [new TextRun({ text: 'TOTAL:', bold: true, size: 18, font: FONT })], alignment: AlignmentType.RIGHT })],
+          { columnSpan: totalColSpan, shading: { type: ShadingType.CLEAR, fill: TOTAL_BG, color: TOTAL_BG } },
+        ),
+        cell(
+          [new Paragraph({ children: [new TextRun({ text: `${currency} ${total.toFixed(2)}`, bold: true, size: 18, color: VIOLET, font: FONT })], alignment: AlignmentType.RIGHT })],
+          { shading: { type: ShadingType.CLEAR, fill: TOTAL_BG, color: TOTAL_BG } },
+        ),
+      ],
+    }),
+  ] : [];
 
   const itemsTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
-    rows: [itemHeaderRow, ...itemDataRows, ...totalDataRow],
+    borders: { top: THIN_BORDER, bottom: THIN_BORDER, left: THIN_BORDER, right: THIN_BORDER, insideHorizontal: THIN_BORDER, insideVertical: THIN_BORDER },
+    rows: [itemHeaderRow, ...itemDataRows, ...totalDataRows],
   });
 
-  // ── 4. TRADE TERMS 2컬럼 ──
+  // ══════════════════════════════════════════════════════════════════
+  // 5. TRADE TERMS — 2컬럼 그리드
+  // ══════════════════════════════════════════════════════════════════
   const tt = args.trade_terms;
   const termsChildren: (Paragraph | Table)[] = [];
   if (tt) {
-    const termPairs: [string, string | undefined][] = [
+    const allPairs: [string, string | undefined][] = [
       ['Incoterms', tt.incoterms],
       ['Payment', tt.payment_terms],
       ['Port of Loading', tt.port_of_loading],
       ['Port of Discharge', tt.port_of_discharge],
       ['Validity', tt.validity_date],
     ];
-    const validPairs = termPairs.filter(([, v]) => v);
+    const validPairs = allPairs.filter(([, v]) => v);
     if (validPairs.length > 0) {
       termsChildren.push(
-        new Paragraph({ text: '', spacing: { after: 40 } }),
-        new Paragraph({ children: [new TextRun({ text: 'TRADE TERMS', bold: true, color: '777777', size: 16 })], spacing: { after: 60 } }),
+        new Paragraph({
+          children: [new TextRun({ text: 'TRADE TERMS', bold: true, size: 16, font: FONT, allCaps: true })],
+          spacing: { before: 200, after: 100 },
+        }),
       );
-      // 2컬럼 배치: 2개씩 묶어 행 생성
+      // 2컬럼씩 행 생성
+      const termRows: TableRow[] = [];
       for (let i = 0; i < validPairs.length; i += 2) {
-        const left = validPairs[i];
+        const [lk, lv] = validPairs[i];
         const right = validPairs[i + 1];
-        termsChildren.push(
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder, insideHorizontal: noBorder, insideVertical: noBorder },
-            rows: [
-              new TableRow({
-                children: [
-                  new TableCell({
-                    width: { size: 50, type: WidthType.PERCENTAGE },
-                    borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder },
-                    children: [
-                      new Paragraph({
-                        children: [
-                          new TextRun({ text: `${left[0]}: `, color: '888888', size: 20 }),
-                          new TextRun({ text: left[1]!, bold: true, size: 20 }),
-                        ],
-                      }),
-                    ],
-                  }),
-                  new TableCell({
-                    width: { size: 50, type: WidthType.PERCENTAGE },
-                    borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder },
-                    children: right
-                      ? [
-                          new Paragraph({
-                            children: [
-                              new TextRun({ text: `${right[0]}: `, color: '888888', size: 20 }),
-                              new TextRun({ text: right[1]!, bold: true, size: 20 }),
-                            ],
-                          }),
-                        ]
-                      : [new Paragraph({ text: '' })],
-                  }),
-                ],
-              }),
+        termRows.push(
+          new TableRow({
+            children: [
+              cell(
+                [new Paragraph({ children: [
+                  new TextRun({ text: `${lk}: `, size: 16, font: FONT, color: LABEL_GRAY }),
+                  new TextRun({ text: lv!, bold: true, size: 16, font: FONT }),
+                ]})],
+                { width: 50, borders: ALL_NO },
+              ),
+              cell(
+                right
+                  ? [new Paragraph({ children: [
+                      new TextRun({ text: `${right[0]}: `, size: 16, font: FONT, color: LABEL_GRAY }),
+                      new TextRun({ text: right[1]!, bold: true, size: 16, font: FONT }),
+                    ]})]
+                  : [new Paragraph({ text: '' })],
+                { width: 50, borders: ALL_NO },
+              ),
             ],
           }),
         );
       }
+      termsChildren.push(
+        new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          borders: { top: NO_BORDER, bottom: NO_BORDER, left: NO_BORDER, right: NO_BORDER, insideHorizontal: NO_BORDER, insideVertical: NO_BORDER },
+          rows: termRows,
+        }),
+      );
     }
   }
 
-  // ── 5. REMARKS ──
+  // ══════════════════════════════════════════════════════════════════
+  // 6. REMARKS
+  // ══════════════════════════════════════════════════════════════════
   const remarksChildren: Paragraph[] = args.remarks
     ? [
-        new Paragraph({ text: '', spacing: { after: 40 } }),
-        new Paragraph({ children: [new TextRun({ text: 'REMARKS', bold: true, color: '777777', size: 16 })], spacing: { after: 60 } }),
-        new Paragraph({ children: [new TextRun({ text: args.remarks, color: '444444', size: 20 })], spacing: { after: 40 } }),
+        new Paragraph({
+          children: [new TextRun({ text: 'REMARKS', bold: true, size: 16, font: FONT, allCaps: true })],
+          spacing: { before: 200, after: 100 },
+        }),
+        new Paragraph({
+          children: [new TextRun({ text: args.remarks, size: 16, font: FONT, color: TEXT_GRAY })],
+        }),
       ]
     : [];
 
-  // ── 6. 서명란: 좌(Authorized Signature) + 우(SEAL) ──
+  // ══════════════════════════════════════════════════════════════════
+  // 7. 서명란: 좌(Authorized Signature) + 우(SEAL 원형)
+  // ══════════════════════════════════════════════════════════════════
   const signatureTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
-    borders: { top: thinBorder, bottom: noBorder, left: noBorder, right: noBorder, insideHorizontal: noBorder, insideVertical: noBorder },
+    borders: { top: THIN_BORDER, bottom: NO_BORDER, left: NO_BORDER, right: NO_BORDER, insideHorizontal: NO_BORDER, insideVertical: NO_BORDER },
     rows: [
       new TableRow({
         children: [
-          new TableCell({
-            width: { size: 60, type: WidthType.PERCENTAGE },
-            borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder },
-            children: [
-              new Paragraph({ text: '', spacing: { before: 200 } }),
-              new Paragraph({ children: [new TextRun({ text: 'Authorized Signature', color: 'AAAAAA', size: 18 })], spacing: { after: 400 } }),
-              new Paragraph({
-                children: [new TextRun({ text: '________________________________', color: '555555', size: 20 })],
-                spacing: { after: 40 },
-              }),
-              new Paragraph({ children: [new TextRun({ text: args.seller?.company_name ?? 'Seller', color: '444444', size: 18 })] }),
+          cell(
+            [
+              new Paragraph({ children: [new TextRun({ text: 'Authorized Signature', size: 14, color: MUTED, font: FONT })], spacing: { before: 300 } }),
+              new Paragraph({ text: '', spacing: { after: 400 } }),
+              new Paragraph({ children: [new TextRun({ text: '_______________________', size: 16, font: FONT })], spacing: { after: 40 } }),
+              new Paragraph({ children: [new TextRun({ text: args.seller?.company_name ?? 'Seller', size: 16, font: FONT, color: TEXT_GRAY })] }),
             ],
-          }),
-          new TableCell({
-            width: { size: 40, type: WidthType.PERCENTAGE },
-            borders: { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder },
-            children: [
-              new Paragraph({ text: '', spacing: { before: 200 } }),
+            { width: 60, borders: ALL_NO },
+          ),
+          cell(
+            [
+              new Paragraph({ text: '', spacing: { before: 300 } }),
               new Paragraph({
-                children: [new TextRun({ text: '[ SEAL ]', color: 'CCCCCC', size: 28 })],
+                children: [new TextRun({ text: '[ SEAL ]', size: 28, color: SEAL_GRAY, font: FONT })],
                 alignment: AlignmentType.CENTER,
                 spacing: { before: 200 },
               }),
             ],
-          }),
+            { width: 40, borders: ALL_NO, verticalAlign: VerticalAlign.CENTER },
+          ),
         ],
       }),
     ],
   });
 
-  // ── 7. 푸터 ──
-  const footer = new Paragraph({
-    children: [
-      new TextRun({
-        text: `Generated by FLONIX AI · ${new Date().toLocaleDateString('ko-KR')}`,
-        color: '999999',
-        size: 18,
-      }),
-    ],
+  // ══════════════════════════════════════════════════════════════════
+  // 8. 푸터
+  // ══════════════════════════════════════════════════════════════════
+  const footerPara = new Paragraph({
+    children: [new TextRun({ text: `Generated by FLONIX AI · ${new Date().toLocaleDateString('ko-KR')}`, size: 14, color: MUTED, font: FONT })],
     alignment: AlignmentType.CENTER,
     spacing: { before: 200 },
   });
 
+  // ══════════════════════════════════════════════════════════════════
+  // Document 조립
+  // ══════════════════════════════════════════════════════════════════
   return new Document({
-    sections: [
-      {
-        properties: {
-          page: {
-            margin: {
-              top: convertMillimetersToTwip(20),
-              bottom: convertMillimetersToTwip(20),
-              left: convertMillimetersToTwip(15),
-              right: convertMillimetersToTwip(15),
-            },
+    sections: [{
+      properties: {
+        page: {
+          margin: {
+            top: 720,
+            right: 720,
+            bottom: 720,
+            left: 720,
           },
         },
-        children: [
-          ...titleSection,
-          partiesTable,
-          new Paragraph({ text: '', spacing: { after: 80 } }),
-          itemsTable,
-          ...termsChildren,
-          ...remarksChildren,
-          new Paragraph({ text: '', spacing: { after: 80 } }),
-          signatureTable,
-          footer,
-        ],
       },
-    ],
+      children: [
+        titlePara,
+        docInfoTable,
+        new Paragraph({ text: '', spacing: { after: 100 } }),
+        partiesTable,
+        new Paragraph({ text: '', spacing: { after: 100 } }),
+        itemsTable,
+        ...termsChildren,
+        ...remarksChildren,
+        new Paragraph({ text: '', spacing: { after: 200 } }),
+        signatureTable,
+        footerPara,
+      ],
+    }],
   });
 }
 
