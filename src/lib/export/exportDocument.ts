@@ -185,11 +185,194 @@ async function htmlToBlob(html: string): Promise<Blob> {
 
 // ─── 무역 서류 HTML ─────────────────────────────────────────────────────────
 function buildTradeDocHTML(args: TradeDocArgs, docType: string): string {
+  if (docType === 'PL') return buildPackingListHTML(args);
+  return buildInvoiceHTML(args, docType);
+}
+
+// ─── PL 전용 HTML ──────────────────────────────────────────────────────────
+function buildPackingListHTML(args: TradeDocArgs): string {
+  const items = args.items ?? [];
+  const cartonsPerItem = 1; // 기본값 — 품목당 1박스
+
+  const totalQty = items.reduce((s, i) => s + (i.quantity ?? 0), 0);
+  const totalCartons = items.length * cartonsPerItem;
+  const totalNW = items.reduce((s, i) => s + (i.net_weight_kg ?? 0), 0);
+  const totalGW = items.reduce((s, i) => s + (i.gross_weight_kg ?? 0), 0);
+  const totalCBM = items.reduce((s, i) => s + (i.cbm ?? 0), 0);
+
+  const itemRows = items
+    .map(
+      (item, i) => `
+      <tr>
+        <td style="text-align:center">${i + 1}</td>
+        <td style="text-align:left;font-weight:600">${item.product_name ?? '—'}</td>
+        <td style="text-align:right">${item.quantity?.toLocaleString() ?? '—'}</td>
+        <td style="text-align:right">${cartonsPerItem}</td>
+        <td style="text-align:right">${item.net_weight_kg?.toFixed(2) ?? '—'}</td>
+        <td style="text-align:right">${item.gross_weight_kg?.toFixed(2) ?? '—'}</td>
+        <td style="text-align:right">${item.cbm?.toFixed(4) ?? '—'}</td>
+      </tr>`,
+    )
+    .join('');
+
+  return `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: "Times New Roman", Georgia, serif; font-size: 11px; color: #111; background: #fff; }
+.page { width: 794px; padding: 40px 50px; }
+h1 { font-size: 18px; font-weight: 700; letter-spacing: .18em; text-align: center; }
+.doc-meta { display: flex; justify-content: space-between; font-size: 10px; color: #555; margin-top: 6px; }
+.parties { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #bbb; margin-top: 14px; }
+.party { padding: 10px 12px; }
+.party + .party { border-left: 1px solid #bbb; }
+.plabel { font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: #777; margin-bottom: 5px; }
+.pname { font-weight: 700; margin-bottom: 2px; }
+.prow { color: #444; margin-bottom: 1px; }
+.email-row { color: #2563eb; }
+table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 10px; }
+th { border: 1px solid #bbb; padding: 5px 6px; background: #f4f4f4; font-size: 9px; text-transform: uppercase; text-align: center; }
+td { border: 1px solid #bbb; padding: 5px 6px; }
+.terms-wrap { margin-top: 12px; }
+.terms-title { font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: #777; margin-bottom: 5px; }
+.terms-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 20px; font-size: 10px; }
+.kv { display: flex; gap: 4px; }
+.kv-k { color: #888; }
+.summary-box { margin-top: 14px; border: 1px solid #bbb; padding: 10px 14px; background: #f9fafb; font-size: 10px; }
+.summary-box .row { display: flex; justify-content: space-between; margin-bottom: 2px; }
+.summary-box .row span:last-child { font-weight: 700; }
+.remarks { margin-top: 12px; font-size: 10px; }
+.sig { margin-top: 20px; display: flex; justify-content: space-between; align-items: flex-end; border-top: 1px solid #bbb; padding-top: 14px; }
+.seal { width: 52px; height: 52px; border: 2px dashed #ccc; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #ccc; }
+.footer { margin-top: 14px; font-size: 9px; color: #aaa; text-align: center; border-top: 1px solid #eee; padding-top: 8px; }
+</style></head>
+<body><div class="page">
+  <div style="border-bottom: 2px solid #111; padding-bottom: 14px; display: flex; justify-content: space-between; align-items: center;">
+    <div>
+      <h1>PACKING LIST</h1>
+      <div class="doc-meta">
+        <span>No: ${args.document_number ?? '—'}</span>
+        <span>Date: ${args.issue_date ?? new Date().toISOString().slice(0, 10)}</span>
+      </div>
+    </div>
+    ${(args.seller as any)?.logo_url ? `<img src="${(args.seller as any).logo_url}" alt="Logo" style="max-height:48px;max-width:160px;object-fit:contain;" crossorigin="anonymous" />` : ''}
+  </div>
+
+  <div class="parties">
+    <div class="party">
+      <div class="plabel">SELLER / EXPORTER</div>
+      <div class="pname">${args.seller?.company_name ?? '—'}</div>
+      ${args.seller?.address ? `<div class="prow">${args.seller.address}</div>` : ''}
+      ${args.seller?.contact_person ? `<div class="prow">${args.seller.contact_person}</div>` : ''}
+      ${args.seller?.email ? `<div class="prow email-row">${args.seller.email}</div>` : ''}
+      ${args.seller?.phone ? `<div class="prow">${args.seller.phone}</div>` : ''}
+    </div>
+    <div class="party">
+      <div class="plabel">BUYER / IMPORTER</div>
+      <div class="pname">${args.buyer?.company_name ?? '—'}</div>
+      ${args.buyer?.address ? `<div class="prow">${args.buyer.address}</div>` : ''}
+      ${args.buyer?.country ? `<div class="prow">${args.buyer.country}</div>` : ''}
+      ${args.buyer?.contact_person ? `<div class="prow">${args.buyer.contact_person}</div>` : ''}
+      ${args.buyer?.email ? `<div class="prow email-row">${args.buyer.email}</div>` : ''}
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:26px;">No</th>
+        <th style="text-align:left;">Description</th>
+        <th>Qty (PCS)</th>
+        <th>Cartons</th>
+        <th>N.W. (kg)</th>
+        <th>G.W. (kg)</th>
+        <th>Meas. (CBM)</th>
+      </tr>
+    </thead>
+    <tbody>${
+      itemRows ||
+      `<tr><td colspan="7" style="text-align:center;color:#aaa;padding:14px">—</td></tr>`
+    }</tbody>
+    ${
+      items.length > 0
+        ? `<tfoot>
+        <tr style="background:#f9f9f9;font-weight:700;">
+          <td colspan="2" style="text-align:right">TOTAL</td>
+          <td style="text-align:right">${totalQty.toLocaleString()} PCS</td>
+          <td style="text-align:right">${totalCartons} CTN</td>
+          <td style="text-align:right">${totalNW.toFixed(2)} kg</td>
+          <td style="text-align:right">${totalGW.toFixed(2)} kg</td>
+          <td style="text-align:right">${totalCBM.toFixed(4)} CBM</td>
+        </tr>
+      </tfoot>`
+        : ''
+    }
+  </table>
+
+  <!-- 총계 박스 -->
+  ${items.length > 0 ? `
+  <div class="summary-box">
+    <div class="row"><span>Total Cartons:</span><span>${totalCartons} CTN</span></div>
+    <div class="row"><span>Total Net Weight:</span><span>${totalNW.toFixed(2)} kg</span></div>
+    <div class="row"><span>Total Gross Weight:</span><span>${totalGW.toFixed(2)} kg</span></div>
+    <div class="row"><span>Total CBM:</span><span>${totalCBM.toFixed(4)} CBM</span></div>
+  </div>` : ''}
+
+  ${
+    args.trade_terms
+      ? `<div class="terms-wrap">
+    <div class="terms-title">Shipping Details</div>
+    <div class="terms-grid">
+      ${args.trade_terms.incoterms ? `<div class="kv"><span class="kv-k">Incoterms:</span><span style="font-weight:600">${args.trade_terms.incoterms}</span></div>` : ''}
+      ${args.trade_terms.port_of_loading ? `<div class="kv"><span class="kv-k">Port of Loading:</span><span style="font-weight:600">${args.trade_terms.port_of_loading}</span></div>` : ''}
+      ${args.trade_terms.port_of_discharge ? `<div class="kv"><span class="kv-k">Port of Discharge:</span><span style="font-weight:600">${args.trade_terms.port_of_discharge}</span></div>` : ''}
+    </div>
+  </div>`
+      : ''
+  }
+
+  <!-- Shipping Mark -->
+  <div class="terms-wrap">
+    <div class="terms-title">Shipping Mark</div>
+    <div style="border:1px solid #bbb;padding:10px 14px;font-family:monospace;font-size:10px;background:#fafafa;white-space:pre-wrap">${args.buyer?.company_name ?? 'BUYER'}
+${args.buyer?.country ?? 'DESTINATION'}
+${args.document_number ?? 'PL-NO'}
+C/NO. 1-${totalCartons}
+MADE IN KOREA</div>
+  </div>
+
+  ${
+    args.remarks
+      ? `<div class="remarks">
+    <div class="terms-title">Remarks</div>
+    <p style="color:#444;white-space:pre-wrap">${args.remarks}</p>
+  </div>`
+      : ''
+  }
+
+  <div class="sig">
+    <div>
+      <p style="color:#aaa;font-size:9px;margin-bottom:20px">Authorized Signature</p>
+      <div style="border-top:1px solid #555;padding-top:3px;min-width:120px;font-size:9px;color:#444">${
+        args.seller?.company_name ?? 'Seller'
+      }</div>
+    </div>
+    ${(args.seller as any)?.seal_url
+      ? `<img src="${(args.seller as any).seal_url}" alt="Seal" style="width:52px;height:52px;object-fit:contain;border-radius:50%;" crossorigin="anonymous" />`
+      : `<div class="seal">SEAL</div>`
+    }
+  </div>
+
+  <div class="footer">Generated by FLONIX AI · ${new Date().toLocaleDateString('ko-KR')}</div>
+</div></body></html>`;
+}
+
+// ─── PI/CI 인보이스 HTML ────────────────────────────────────────────────────
+function buildInvoiceHTML(args: TradeDocArgs, docType: string): string {
   const title = DOC_TITLE[docType] ?? docType;
   const items = args.items ?? [];
   const currency = items[0]?.currency ?? 'USD';
   const total = items.reduce((s, i) => s + (i.quantity ?? 0) * (i.unit_price ?? 0), 0);
-  const isPL = docType === 'PL';
 
   const itemRows = items
     .map(
@@ -209,21 +392,9 @@ function buildTradeDocHTML(args: TradeDocArgs, docType: string): string {
             ? `${item.currency ?? 'USD'} ${(item.quantity * item.unit_price).toFixed(2)}`
             : '—'
         }</td>
-        ${
-          isPL
-            ? `<td style="text-align:right">${item.net_weight_kg?.toFixed(2) ?? '—'}</td>
-               <td style="text-align:right">${item.gross_weight_kg?.toFixed(2) ?? '—'}</td>
-               <td style="text-align:right">${item.cbm?.toFixed(4) ?? '—'}</td>`
-            : ''
-        }
       </tr>`,
     )
     .join('');
-
-  const plExtraTH = isPL
-    ? '<th>N/W (kg)</th><th>G/W (kg)</th><th>CBM</th>'
-    : '';
-  const totalSpan = isPL ? 8 : 5;
 
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
@@ -262,7 +433,7 @@ td { border: 1px solid #bbb; padding: 5px 6px; }
         <span>Date: ${args.issue_date ?? new Date().toISOString().slice(0, 10)}</span>
       </div>
     </div>
-    ${args.seller?.logo_url ? `<img src="${args.seller.logo_url}" alt="Logo" style="max-height:48px;max-width:160px;object-fit:contain;" crossorigin="anonymous" />` : ''}
+    ${(args.seller as any)?.logo_url ? `<img src="${(args.seller as any).logo_url}" alt="Logo" style="max-height:48px;max-width:160px;object-fit:contain;" crossorigin="anonymous" />` : ''}
   </div>
 
   <div class="parties">
@@ -293,18 +464,17 @@ td { border: 1px solid #bbb; padding: 5px 6px; }
         <th>Qty</th>
         <th>Unit Price</th>
         <th>Amount</th>
-        ${plExtraTH}
       </tr>
     </thead>
     <tbody>${
       itemRows ||
-      `<tr><td colspan="${isPL ? 9 : 6}" style="text-align:center;color:#aaa;padding:14px">—</td></tr>`
+      `<tr><td colspan="6" style="text-align:center;color:#aaa;padding:14px">—</td></tr>`
     }</tbody>
     ${
       items.length > 0
         ? `<tfoot>
         <tr>
-          <td colspan="${totalSpan}" style="font-weight:700;text-align:right;background:#f9f9f9;">TOTAL</td>
+          <td colspan="5" style="font-weight:700;text-align:right;background:#f9f9f9;">TOTAL</td>
           <td style="font-weight:700;text-align:right;color:#1d4ed8;background:#f9f9f9;">${currency} ${total.toFixed(2)}</td>
         </tr>
       </tfoot>`
@@ -343,8 +513,8 @@ td { border: 1px solid #bbb; padding: 5px 6px; }
         args.seller?.company_name ?? 'Seller'
       }</div>
     </div>
-    ${args.seller?.seal_url
-      ? `<img src="${args.seller.seal_url}" alt="Seal" style="width:52px;height:52px;object-fit:contain;border-radius:50%;" crossorigin="anonymous" />`
+    ${(args.seller as any)?.seal_url
+      ? `<img src="${(args.seller as any).seal_url}" alt="Seal" style="width:52px;height:52px;object-fit:contain;border-radius:50%;" crossorigin="anonymous" />`
       : `<div class="seal">SEAL</div>`
     }
   </div>
@@ -874,11 +1044,11 @@ function buildTradeDocDOCX(args: TradeDocArgs, docType: string): Document {
   });
 
   // ══════════════════════════════════════════════════════════════════
-  // 4. 품목 테이블 — 진한 헤더 + 회색 TOTAL
+  // 4. 품목 테이블 — PL: 포장정보 중심 / PI·CI: 단가·금액
   // ══════════════════════════════════════════════════════════════════
-  const baseHeaders = ['NO', 'DESCRIPTION', 'HS CODE', 'QTY', 'UNIT PRICE', 'AMOUNT'];
-  const plHeaders = [...baseHeaders, 'N/W (kg)', 'G/W (kg)', 'CBM'];
-  const headers = isPL ? plHeaders : baseHeaders;
+  const plHeaders = ['NO', 'DESCRIPTION', 'QTY (PCS)', 'CARTONS', 'N.W. (kg)', 'G.W. (kg)', 'MEAS. (CBM)'];
+  const invoiceHeaders = ['NO', 'DESCRIPTION', 'HS CODE', 'QTY', 'UNIT PRICE', 'AMOUNT'];
+  const headers = isPL ? plHeaders : invoiceHeaders;
 
   const itemHeaderRow = new TableRow({
     tableHeader: true,
@@ -888,57 +1058,93 @@ function buildTradeDocDOCX(args: TradeDocArgs, docType: string): Document {
         children: [
           new Paragraph({
             children: [new TextRun({ text: h, bold: true, size: 16, color: 'FFFFFF', font: FONT })],
-            alignment: idx >= 3 ? AlignmentType.RIGHT : (idx === 0 ? AlignmentType.CENTER : AlignmentType.LEFT),
+            alignment: idx >= (isPL ? 2 : 3) ? AlignmentType.RIGHT : (idx === 0 ? AlignmentType.CENTER : AlignmentType.LEFT),
           }),
         ],
       }),
     ),
   });
 
+  const cartonsPerItem = 1;
+  const totalQty = items.reduce((s, i) => s + (i.quantity ?? 0), 0);
+  const totalCartons = items.length * cartonsPerItem;
+  const totalNW = items.reduce((s, i) => s + (i.net_weight_kg ?? 0), 0);
+  const totalGW = items.reduce((s, i) => s + (i.gross_weight_kg ?? 0), 0);
+  const totalCBM = items.reduce((s, i) => s + (i.cbm ?? 0), 0);
+
   const itemDataRows = items.map((item, idx) =>
-    new TableRow({
-      children: [
-        cell([p(String(idx + 1), { size: 16, alignment: AlignmentType.CENTER })]),
-        cell([new Paragraph({ children: [new TextRun({ text: item.product_name ?? '—', bold: true, size: 16, font: FONT })] })]),
-        cell([p(item.hs_code ?? '—', { size: 16, alignment: AlignmentType.CENTER })]),
-        cell([p(item.quantity?.toLocaleString() ?? '—', { size: 16, alignment: AlignmentType.RIGHT })]),
-        cell([p(
-          item.unit_price != null ? `${item.currency ?? 'USD'} ${item.unit_price.toFixed(2)}` : '—',
-          { size: 16, alignment: AlignmentType.RIGHT },
-        )]),
-        cell([new Paragraph({
-          children: [new TextRun({
-            text: item.quantity != null && item.unit_price != null
-              ? `${item.currency ?? 'USD'} ${(item.quantity * item.unit_price).toFixed(2)}`
-              : '—',
-            bold: true, size: 16, font: FONT,
-          })],
-          alignment: AlignmentType.RIGHT,
-        })]),
-        ...(isPL ? [
-          cell([p(item.net_weight_kg?.toFixed(2) ?? '—', { size: 16, alignment: AlignmentType.RIGHT })]),
-          cell([p(item.gross_weight_kg?.toFixed(2) ?? '—', { size: 16, alignment: AlignmentType.RIGHT })]),
-          cell([p(item.cbm?.toFixed(4) ?? '—', { size: 16, alignment: AlignmentType.RIGHT })]),
-        ] : []),
-      ],
-    }),
+    isPL
+      ? new TableRow({
+          children: [
+            cell([p(String(idx + 1), { size: 16, alignment: AlignmentType.CENTER })]),
+            cell([new Paragraph({ children: [new TextRun({ text: item.product_name ?? '—', bold: true, size: 16, font: FONT })] })]),
+            cell([p(item.quantity?.toLocaleString() ?? '—', { size: 16, alignment: AlignmentType.RIGHT })]),
+            cell([p(String(cartonsPerItem), { size: 16, alignment: AlignmentType.RIGHT })]),
+            cell([p(item.net_weight_kg?.toFixed(2) ?? '—', { size: 16, alignment: AlignmentType.RIGHT })]),
+            cell([p(item.gross_weight_kg?.toFixed(2) ?? '—', { size: 16, alignment: AlignmentType.RIGHT })]),
+            cell([p(item.cbm?.toFixed(4) ?? '—', { size: 16, alignment: AlignmentType.RIGHT })]),
+          ],
+        })
+      : new TableRow({
+          children: [
+            cell([p(String(idx + 1), { size: 16, alignment: AlignmentType.CENTER })]),
+            cell([new Paragraph({ children: [new TextRun({ text: item.product_name ?? '—', bold: true, size: 16, font: FONT })] })]),
+            cell([p(item.hs_code ?? '—', { size: 16, alignment: AlignmentType.CENTER })]),
+            cell([p(item.quantity?.toLocaleString() ?? '—', { size: 16, alignment: AlignmentType.RIGHT })]),
+            cell([p(
+              item.unit_price != null ? `${item.currency ?? 'USD'} ${item.unit_price.toFixed(2)}` : '—',
+              { size: 16, alignment: AlignmentType.RIGHT },
+            )]),
+            cell([new Paragraph({
+              children: [new TextRun({
+                text: item.quantity != null && item.unit_price != null
+                  ? `${item.currency ?? 'USD'} ${(item.quantity * item.unit_price).toFixed(2)}`
+                  : '—',
+                bold: true, size: 16, font: FONT,
+              })],
+              alignment: AlignmentType.RIGHT,
+            })]),
+          ],
+        }),
   );
 
-  const totalColSpan = isPL ? 8 : 5;
-  const totalDataRows = items.length > 0 ? [
-    new TableRow({
-      children: [
-        cell(
-          [new Paragraph({ children: [new TextRun({ text: 'TOTAL:', bold: true, size: 18, font: FONT })], alignment: AlignmentType.RIGHT })],
-          { columnSpan: totalColSpan, shading: { type: ShadingType.CLEAR, fill: TOTAL_BG, color: TOTAL_BG } },
-        ),
-        cell(
-          [new Paragraph({ children: [new TextRun({ text: `${currency} ${total.toFixed(2)}`, bold: true, size: 18, color: VIOLET, font: FONT })], alignment: AlignmentType.RIGHT })],
-          { shading: { type: ShadingType.CLEAR, fill: TOTAL_BG, color: TOTAL_BG } },
-        ),
-      ],
-    }),
-  ] : [];
+  const totalDataRows = items.length > 0
+    ? isPL
+      ? [
+          new TableRow({
+            children: [
+              cell(
+                [new Paragraph({ children: [new TextRun({ text: 'TOTAL', bold: true, size: 16, font: FONT })], alignment: AlignmentType.RIGHT })],
+                { columnSpan: 2, shading: { type: ShadingType.CLEAR, fill: TOTAL_BG, color: TOTAL_BG } },
+              ),
+              cell([new Paragraph({ children: [new TextRun({ text: `${totalQty.toLocaleString()} PCS`, bold: true, size: 16, font: FONT })], alignment: AlignmentType.RIGHT })],
+                { shading: { type: ShadingType.CLEAR, fill: TOTAL_BG, color: TOTAL_BG } }),
+              cell([new Paragraph({ children: [new TextRun({ text: `${totalCartons} CTN`, bold: true, size: 16, font: FONT })], alignment: AlignmentType.RIGHT })],
+                { shading: { type: ShadingType.CLEAR, fill: TOTAL_BG, color: TOTAL_BG } }),
+              cell([new Paragraph({ children: [new TextRun({ text: `${totalNW.toFixed(2)} kg`, bold: true, size: 16, font: FONT })], alignment: AlignmentType.RIGHT })],
+                { shading: { type: ShadingType.CLEAR, fill: TOTAL_BG, color: TOTAL_BG } }),
+              cell([new Paragraph({ children: [new TextRun({ text: `${totalGW.toFixed(2)} kg`, bold: true, size: 16, font: FONT })], alignment: AlignmentType.RIGHT })],
+                { shading: { type: ShadingType.CLEAR, fill: TOTAL_BG, color: TOTAL_BG } }),
+              cell([new Paragraph({ children: [new TextRun({ text: `${totalCBM.toFixed(4)} CBM`, bold: true, size: 16, color: VIOLET, font: FONT })], alignment: AlignmentType.RIGHT })],
+                { shading: { type: ShadingType.CLEAR, fill: TOTAL_BG, color: TOTAL_BG } }),
+            ],
+          }),
+        ]
+      : [
+          new TableRow({
+            children: [
+              cell(
+                [new Paragraph({ children: [new TextRun({ text: 'TOTAL:', bold: true, size: 18, font: FONT })], alignment: AlignmentType.RIGHT })],
+                { columnSpan: 5, shading: { type: ShadingType.CLEAR, fill: TOTAL_BG, color: TOTAL_BG } },
+              ),
+              cell(
+                [new Paragraph({ children: [new TextRun({ text: `${currency} ${total.toFixed(2)}`, bold: true, size: 18, color: VIOLET, font: FONT })], alignment: AlignmentType.RIGHT })],
+                { shading: { type: ShadingType.CLEAR, fill: TOTAL_BG, color: TOTAL_BG } },
+              ),
+            ],
+          }),
+        ]
+    : [];
 
   const itemsTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },

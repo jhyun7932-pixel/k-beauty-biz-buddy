@@ -666,6 +666,16 @@ function DocRenderer({
       />
     );
 
+  if (dt === "PL")
+    return (
+      <PackingListView
+        data={data as unknown as TradeDocArgs}
+        isStreaming={isStreaming}
+        editMode={editMode}
+        onFieldChange={onFieldChange}
+      />
+    );
+
   return (
     <TradeDocView
       data={data as unknown as TradeDocArgs}
@@ -676,7 +686,208 @@ function DocRenderer({
   );
 }
 
-// --- PI/CI/PL A4 스타일 문서 ---
+// --- PL 전용 뷰 (포장정보 중심, 단가/금액 제거) ---
+function PackingListView({
+  data,
+  isStreaming,
+  editMode = false,
+  onFieldChange,
+}: {
+  data: TradeDocArgs;
+  isStreaming: boolean;
+  editMode?: boolean;
+  onFieldChange?: (path: string, value: string | number) => void;
+}) {
+  const fc = onFieldChange ?? (() => {});
+  const items = data.items || [];
+  const cartonsPerItem = 1;
+
+  const totalQty = items.reduce((s, i) => s + (i.quantity ?? 0), 0);
+  const totalCartons = items.length * cartonsPerItem;
+  const totalNW = items.reduce((s, i) => s + (i.net_weight_kg ?? 0), 0);
+  const totalGW = items.reduce((s, i) => s + (i.gross_weight_kg ?? 0), 0);
+  const totalCBM = items.reduce((s, i) => s + (i.cbm ?? 0), 0);
+
+  return (
+    <div
+      className="bg-white border border-gray-300 shadow-md rounded-sm mx-auto text-[11px] leading-relaxed"
+      style={{
+        maxWidth: "480px",
+        fontFamily: "'Times New Roman', Georgia, serif",
+      }}
+    >
+      {/* 문서 타이틀 */}
+      <div className="border-b-2 border-gray-800 px-6 py-5 text-center">
+        <h1 className="text-lg font-bold tracking-[0.2em] text-gray-900">
+          PACKING LIST
+        </h1>
+        <div className="flex justify-between mt-3 text-[10px] text-gray-600">
+          <span>
+            No: {editMode ? <EditableField value={data.document_number} path="document_number" editMode={editMode} onFieldChange={fc} /> : data.document_number || <Sk w={80} s={isStreaming} />}
+          </span>
+          <span>Date: {editMode ? <EditableField value={data.issue_date} path="issue_date" editMode={editMode} onFieldChange={fc} /> : data.issue_date || <Sk w={80} s={isStreaming} />}</span>
+        </div>
+      </div>
+
+      {/* Seller / Buyer */}
+      <div className="grid grid-cols-2 border-b border-gray-300">
+        <div className="p-3 border-r border-gray-300">
+          <h3 className="font-bold text-gray-600 uppercase tracking-wide mb-1.5 text-[9px]">
+            SELLER / EXPORTER
+          </h3>
+          {data.seller ? (
+            <div className="space-y-0.5 text-gray-800">
+              <p className="font-semibold">{data.seller.company_name}</p>
+              {data.seller.address && <p>{data.seller.address}</p>}
+              {data.seller.contact_person && <p>{data.seller.contact_person}</p>}
+              {data.seller.email && <p className="text-blue-700">{data.seller.email}</p>}
+              {data.seller.phone && <p>{data.seller.phone}</p>}
+            </div>
+          ) : (
+            <LineSkeleton n={3} s={isStreaming} />
+          )}
+        </div>
+        <div className="p-3">
+          <h3 className="font-bold text-gray-600 uppercase tracking-wide mb-1.5 text-[9px]">
+            BUYER / IMPORTER
+          </h3>
+          {data.buyer ? (
+            <div className="space-y-0.5 text-gray-800">
+              <p className="font-semibold">{data.buyer.company_name}</p>
+              {data.buyer.address && <p>{data.buyer.address}</p>}
+              {data.buyer.country && <p>{data.buyer.country}</p>}
+              {data.buyer.contact_person && <p>{data.buyer.contact_person}</p>}
+              {data.buyer.email && <p className="text-blue-700">{data.buyer.email}</p>}
+            </div>
+          ) : (
+            <LineSkeleton n={3} s={isStreaming} />
+          )}
+        </div>
+      </div>
+
+      {/* PL 품목 테이블 — 단가/금액 제거, 포장정보 중심 */}
+      <div className="px-3 py-2">
+        <table className="w-full border-collapse text-[10px]">
+          <thead>
+            <tr className="bg-gray-100 text-gray-700 font-semibold">
+              <th className="border border-gray-300 px-1.5 py-1 text-left w-8">No</th>
+              <th className="border border-gray-300 px-1.5 py-1 text-left">Description</th>
+              <th className="border border-gray-300 px-1.5 py-1 text-right">Qty (PCS)</th>
+              <th className="border border-gray-300 px-1.5 py-1 text-right">Cartons</th>
+              <th className="border border-gray-300 px-1.5 py-1 text-right">N.W. (kg)</th>
+              <th className="border border-gray-300 px-1.5 py-1 text-right">G.W. (kg)</th>
+              <th className="border border-gray-300 px-1.5 py-1 text-right">CBM</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.length > 0 ? (
+              items.map((item, i) => (
+                <tr key={i} className="hover:bg-blue-50/30">
+                  <td className="border border-gray-300 px-1.5 py-1 text-center">{i + 1}</td>
+                  <td className="border border-gray-300 px-1.5 py-1 font-medium">
+                    {item.product_name || <Sk w={100} s={isStreaming} />}
+                  </td>
+                  <td className="border border-gray-300 px-1.5 py-1 text-right">
+                    {editMode ? <EditableField value={item.quantity} path={`items.${i}.quantity`} editMode={editMode} onFieldChange={fc} type="number" /> : item.quantity?.toLocaleString() ?? "—"}
+                  </td>
+                  <td className="border border-gray-300 px-1.5 py-1 text-right">{cartonsPerItem}</td>
+                  <td className="border border-gray-300 px-1.5 py-1 text-right">
+                    {editMode ? <EditableField value={item.net_weight_kg} path={`items.${i}.net_weight_kg`} editMode={editMode} onFieldChange={fc} type="number" /> : item.net_weight_kg?.toFixed(2) ?? "—"}
+                  </td>
+                  <td className="border border-gray-300 px-1.5 py-1 text-right">
+                    {editMode ? <EditableField value={item.gross_weight_kg} path={`items.${i}.gross_weight_kg`} editMode={editMode} onFieldChange={fc} type="number" /> : item.gross_weight_kg?.toFixed(2) ?? "—"}
+                  </td>
+                  <td className="border border-gray-300 px-1.5 py-1 text-right">
+                    {editMode ? <EditableField value={item.cbm} path={`items.${i}.cbm`} editMode={editMode} onFieldChange={fc} type="number" /> : item.cbm?.toFixed(4) ?? "—"}
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={7} className="border border-gray-300 px-2 py-6 text-center text-gray-400">
+                  {isStreaming ? <Dots label="품목 데이터 수신 중" /> : "품목이 없습니다"}
+                </td>
+              </tr>
+            )}
+          </tbody>
+          {items.length > 0 && (
+            <tfoot>
+              <tr className="bg-gray-50 font-bold">
+                <td colSpan={2} className="border border-gray-300 px-1.5 py-1.5 text-right">TOTAL</td>
+                <td className="border border-gray-300 px-1.5 py-1.5 text-right">{totalQty.toLocaleString()} PCS</td>
+                <td className="border border-gray-300 px-1.5 py-1.5 text-right">{totalCartons} CTN</td>
+                <td className="border border-gray-300 px-1.5 py-1.5 text-right">{totalNW.toFixed(2)} kg</td>
+                <td className="border border-gray-300 px-1.5 py-1.5 text-right">{totalGW.toFixed(2)} kg</td>
+                <td className="border border-gray-300 px-1.5 py-1.5 text-right text-blue-800">{totalCBM.toFixed(4)} CBM</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+
+      {/* 총계 박스 */}
+      {items.length > 0 && (
+        <div className="mx-3 mb-2 border border-gray-300 rounded bg-gray-50 px-4 py-2.5 text-[10px]">
+          <div className="flex justify-between mb-0.5"><span className="text-gray-500">Total Cartons:</span><span className="font-bold">{totalCartons} CTN</span></div>
+          <div className="flex justify-between mb-0.5"><span className="text-gray-500">Total Net Weight:</span><span className="font-bold">{totalNW.toFixed(2)} kg</span></div>
+          <div className="flex justify-between mb-0.5"><span className="text-gray-500">Total Gross Weight:</span><span className="font-bold">{totalGW.toFixed(2)} kg</span></div>
+          <div className="flex justify-between"><span className="text-gray-500">Total CBM:</span><span className="font-bold">{totalCBM.toFixed(4)} CBM</span></div>
+        </div>
+      )}
+
+      {/* Shipping Details (Trade Terms — Payment/Validity 제외) */}
+      {(data.trade_terms || isStreaming) && (
+        <div className="border-t border-gray-300 px-4 py-2.5">
+          <h3 className="font-bold text-gray-700 uppercase tracking-wide mb-1.5 text-[9px]">
+            Shipping Details
+          </h3>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+            <KV k="Incoterms" v={data.trade_terms?.incoterms} s={isStreaming} />
+            <KV k="Port of Loading" v={data.trade_terms?.port_of_loading} s={isStreaming} />
+            <KV k="Port of Discharge" v={data.trade_terms?.port_of_discharge} s={isStreaming} />
+          </div>
+        </div>
+      )}
+
+      {/* Shipping Mark */}
+      <div className="border-t border-gray-300 px-4 py-2.5">
+        <h3 className="font-bold text-gray-700 uppercase tracking-wide mb-1.5 text-[9px]">
+          Shipping Mark
+        </h3>
+        <div className="border border-gray-300 rounded bg-gray-50 px-3 py-2 font-mono text-[10px] text-gray-700 whitespace-pre-wrap">
+{data.buyer?.company_name ?? "BUYER"}{"\n"}{data.buyer?.country ?? "DESTINATION"}{"\n"}{data.document_number ?? "PL-NO"}{"\n"}C/NO. 1-{totalCartons}{"\n"}MADE IN KOREA
+        </div>
+      </div>
+
+      {/* Remarks */}
+      {(data.remarks || editMode) && (
+        <div className="border-t border-gray-300 px-4 py-2.5">
+          <h3 className="font-bold text-gray-700 uppercase tracking-wide mb-1 text-[9px]">
+            Remarks
+          </h3>
+          <p className="text-gray-600 whitespace-pre-wrap">
+            {editMode ? <EditableField value={data.remarks} path="remarks" editMode={editMode} onFieldChange={fc} /> : data.remarks}
+          </p>
+        </div>
+      )}
+
+      {/* 서명 영역 */}
+      <div className="border-t border-gray-300 px-6 py-5 flex justify-between items-end">
+        <div className="text-center">
+          <p className="text-gray-400 mb-6 text-[9px]">Authorized Signature</p>
+          <div className="border-t border-gray-400 pt-1 w-28 text-[9px] text-gray-600">
+            {data.seller?.company_name || "Seller"}
+          </div>
+        </div>
+        <div className="w-14 h-14 border-2 border-dashed border-gray-300 rounded-full flex items-center justify-center text-gray-300 text-[8px]">
+          SEAL
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- PI/CI A4 스타일 문서 ---
 function TradeDocView({
   data,
   isStreaming,

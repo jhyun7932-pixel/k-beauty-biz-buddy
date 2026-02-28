@@ -1,9 +1,9 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Plus, FileText, Calendar, Trash2, MoreVertical, ChevronRight, Download, FileDown, History, Clock, Building2, Package, CheckSquare, Square, ChevronLeft, Loader2 } from 'lucide-react';
+import { Plus, FileText, Calendar, Trash2, MoreVertical, ChevronRight, Building2, Package, CheckSquare, Square, ChevronLeft, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+// Tabs removed — now using saved documents view
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -54,258 +54,29 @@ const STAGE_HEADER_COLORS: Record<ProjectStage, string> = {
   done: 'bg-green-500',
 };
 
-// ──────────────────────────────────────────────────────────
-// Stage-based document tab definitions
-// ──────────────────────────────────────────────────────────
-interface DocTabDef {
-  key: string;
-  label: string;
-  emoji: string;
-  docType: string;
-}
-
-const PROPOSAL_TABS: DocTabDef[] = [
-  { key: 'proposal', label: '제안서/소개서', emoji: '🏢', docType: 'PROPOSAL' },
-  { key: 'sample_email', label: '샘플 발송 안내 메일', emoji: '✉️', docType: 'SAMPLE_EMAIL' },
-];
-
-const SAMPLE_TABS: DocTabDef[] = [
-  { key: 'sample_pi', label: '샘플 PI', emoji: '📄', docType: 'SAMPLE_PI' },
-  { key: 'sample_pl', label: '샘플 발송장', emoji: '📦', docType: 'SAMPLE_PL' },
-];
-
-const BULK_TABS: DocTabDef[] = [
-  { key: 'final_pi', label: '본 오더 PI', emoji: '📄', docType: 'PI' },
-  { key: 'contract', label: 'Sales Contract', emoji: '📝', docType: 'CONTRACT' },
-  { key: 'ci', label: 'CI (인보이스)', emoji: '💰', docType: 'CI' },
-  { key: 'pl', label: 'PL (패킹리스트)', emoji: '📦', docType: 'PL' },
-];
-
-function getTabsForStage(stage: ProjectStage): { active: DocTabDef[]; history: DocTabDef[] } {
-  switch (stage) {
-    case 'proposal':
-      return { active: PROPOSAL_TABS, history: [] };
-    case 'sample':
-      return { active: [...PROPOSAL_TABS, ...SAMPLE_TABS], history: [] };
-    case 'order':
-      return { active: BULK_TABS, history: [...PROPOSAL_TABS, ...SAMPLE_TABS] };
-    case 'shipping':
-    case 'done':
-      return { active: BULK_TABS, history: [...PROPOSAL_TABS, ...SAMPLE_TABS] };
-    default:
-      return { active: PROPOSAL_TABS, history: [] };
-  }
-}
+// (Tab definitions removed — now using saved documents from JSONB)
 
 // ──────────────────────────────────────────────────────────
-// Document HTML generator per type
+// Document type labels
 // ──────────────────────────────────────────────────────────
-function getDocHtml(type: string, project: ExportProject): string {
-  const base = {
-    companyName: 'K-Beauty Co., Ltd.',
-    buyerName: project.buyer_name || 'International Buyer Co.',
-    piNumber: `PI-${project.id.slice(-6).toUpperCase()}`,
-    date: new Date().toLocaleDateString('en-US'),
-  };
-
-  switch (type) {
-    case 'PROPOSAL':
-      return `<div style="font-family:sans-serif;padding:20px;max-width:700px">
-        <h2 style="border-bottom:2px solid #2563eb;padding-bottom:10px;color:#1e40af">COMPANY / BRAND INTRODUCTION</h2>
-        <p><strong>Date:</strong> ${base.date}</p>
-        <p><strong>Company:</strong> ${base.companyName}</p>
-        <h3 style="margin-top:20px">About Us</h3>
-        <p>We are a leading K-Beauty manufacturer with 10+ years of experience, CGMP/ISO 22716 certified, serving 50+ global partners.</p>
-        <h3 style="margin-top:15px">Core Products</h3>
-        <table style="width:100%;border-collapse:collapse;margin-top:10px">
-          <thead><tr style="background:#eff6ff"><th style="border:1px solid #ddd;padding:8px;text-align:left">Product</th><th style="border:1px solid #ddd;padding:8px">Category</th><th style="border:1px solid #ddd;padding:8px">MOQ</th></tr></thead>
-          <tbody>
-            <tr><td style="border:1px solid #ddd;padding:8px">Hydra Serum 30ml</td><td style="border:1px solid #ddd;padding:8px;text-align:center">Skincare</td><td style="border:1px solid #ddd;padding:8px;text-align:center">500</td></tr>
-            <tr><td style="border:1px solid #ddd;padding:8px">Glow Cream 50ml</td><td style="border:1px solid #ddd;padding:8px;text-align:center">Skincare</td><td style="border:1px solid #ddd;padding:8px;text-align:center">300</td></tr>
-          </tbody>
-        </table>
-        <h3 style="margin-top:15px">Certifications</h3>
-        <p>✅ CGMP · ✅ ISO 22716 · ✅ Vegan Certified · ✅ EWG Verified</p>
-      </div>`;
-    case 'SAMPLE_EMAIL':
-      return `<div style="font-family:sans-serif;padding:20px;max-width:700px">
-        <h2 style="border-bottom:2px solid #2563eb;padding-bottom:10px;color:#1e40af">SAMPLE SHIPMENT NOTICE</h2>
-        <p style="margin-top:15px">Dear Valued Buyer,</p>
-        <p>Thank you for your interest in our products. We are pleased to inform you that your sample package has been prepared and will be shipped shortly.</p>
-        <h3 style="margin-top:15px">Sample Package Contents:</h3>
-        <ul><li>Hydra Serum 30ml × 3</li><li>Glow Cream 50ml × 2</li><li>Product Catalog</li><li>Certificate copies</li></ul>
-        <p style="margin-top:15px"><strong>Estimated Delivery:</strong> 5-7 business days via DHL Express</p>
-        <p><strong>Tracking Number:</strong> (Will be provided upon shipment)</p>
-        <p style="margin-top:20px">Best regards,<br/>${base.companyName} Export Team</p>
-      </div>`;
-    case 'SAMPLE_PI':
-      return `<div style="font-family:sans-serif;padding:20px;max-width:700px">
-        <h2 style="border-bottom:2px solid #333;padding-bottom:10px">SAMPLE PROFORMA INVOICE</h2>
-        <p><strong>PI No.:</strong> SPI-${base.piNumber}</p><p><strong>Date:</strong> ${base.date}</p>
-        <p><strong>Seller:</strong> ${base.companyName}</p><p><strong>Buyer:</strong> ${base.buyerName}</p>
-        <table style="width:100%;border-collapse:collapse;margin-top:15px">
-          <thead><tr style="background:#f5f5f5"><th style="border:1px solid #ddd;padding:8px;text-align:left">Description</th><th style="border:1px solid #ddd;padding:8px">Qty</th><th style="border:1px solid #ddd;padding:8px">Unit Price</th><th style="border:1px solid #ddd;padding:8px">Amount</th></tr></thead>
-          <tbody>
-            <tr><td style="border:1px solid #ddd;padding:8px">Hydra Serum 30ml (Sample)</td><td style="border:1px solid #ddd;padding:8px;text-align:center">3</td><td style="border:1px solid #ddd;padding:8px;text-align:right">$4.50</td><td style="border:1px solid #ddd;padding:8px;text-align:right">$13.50</td></tr>
-            <tr><td style="border:1px solid #ddd;padding:8px">Glow Cream 50ml (Sample)</td><td style="border:1px solid #ddd;padding:8px;text-align:center">2</td><td style="border:1px solid #ddd;padding:8px;text-align:right">$5.20</td><td style="border:1px solid #ddd;padding:8px;text-align:right">$10.40</td></tr>
-          </tbody>
-        </table>
-        <p style="text-align:right;margin-top:10px"><strong>Total: $23.90</strong></p>
-        <p><strong>Note:</strong> Sample shipment - no charge for product; buyer covers shipping.</p>
-      </div>`;
-    case 'SAMPLE_PL':
-      return `<div style="font-family:sans-serif;padding:20px;max-width:700px">
-        <h2 style="border-bottom:2px solid #333;padding-bottom:10px">SAMPLE PACKING LIST</h2>
-        <p><strong>PL No.:</strong> SPL-${base.piNumber}</p><p><strong>Date:</strong> ${base.date}</p>
-        <table style="width:100%;border-collapse:collapse;margin-top:15px">
-          <thead><tr style="background:#f5f5f5"><th style="border:1px solid #ddd;padding:8px">Item</th><th style="border:1px solid #ddd;padding:8px">Qty</th><th style="border:1px solid #ddd;padding:8px">N.W. (g)</th></tr></thead>
-          <tbody>
-            <tr><td style="border:1px solid #ddd;padding:8px">Hydra Serum 30ml</td><td style="border:1px solid #ddd;padding:8px;text-align:center">3</td><td style="border:1px solid #ddd;padding:8px;text-align:right">90</td></tr>
-            <tr><td style="border:1px solid #ddd;padding:8px">Glow Cream 50ml</td><td style="border:1px solid #ddd;padding:8px;text-align:center">2</td><td style="border:1px solid #ddd;padding:8px;text-align:right">100</td></tr>
-          </tbody>
-        </table>
-        <p style="text-align:right;margin-top:10px"><strong>Total: 1 Box / N.W. 190g</strong></p>
-      </div>`;
-    case 'PI':
-      return `<div style="font-family:sans-serif;padding:20px;max-width:700px">
-        <h2 style="border-bottom:2px solid #333;padding-bottom:10px">PROFORMA INVOICE</h2>
-        <p><strong>PI No.:</strong> ${base.piNumber}</p><p><strong>Date:</strong> ${base.date}</p>
-        <p><strong>Seller:</strong> ${base.companyName}</p><p><strong>Buyer:</strong> ${base.buyerName}</p>
-        <table style="width:100%;border-collapse:collapse;margin-top:15px">
-          <thead><tr style="background:#f5f5f5"><th style="border:1px solid #ddd;padding:8px;text-align:left">Description</th><th style="border:1px solid #ddd;padding:8px">Qty</th><th style="border:1px solid #ddd;padding:8px">Unit Price</th><th style="border:1px solid #ddd;padding:8px">Amount</th></tr></thead>
-          <tbody>
-            <tr><td style="border:1px solid #ddd;padding:8px">Hydra Serum 30ml</td><td style="border:1px solid #ddd;padding:8px;text-align:center">500</td><td style="border:1px solid #ddd;padding:8px;text-align:right">$4.50</td><td style="border:1px solid #ddd;padding:8px;text-align:right">$2,250</td></tr>
-            <tr><td style="border:1px solid #ddd;padding:8px">Glow Cream 50ml</td><td style="border:1px solid #ddd;padding:8px;text-align:center">500</td><td style="border:1px solid #ddd;padding:8px;text-align:right">$5.20</td><td style="border:1px solid #ddd;padding:8px;text-align:right">$2,600</td></tr>
-          </tbody>
-        </table>
-        <p style="text-align:right;margin-top:10px"><strong>Total: $4,850.00</strong></p>
-        <p><strong>Payment Terms:</strong> T/T 30/70</p><p><strong>Incoterms:</strong> FOB Incheon</p>
-      </div>`;
-    case 'CONTRACT':
-      return `<div style="font-family:sans-serif;padding:20px;max-width:700px">
-        <h2 style="border-bottom:2px solid #333;padding-bottom:10px">SALES CONTRACT</h2>
-        <p><strong>Contract No.:</strong> SC-${base.piNumber}</p><p><strong>Date:</strong> ${base.date}</p>
-        <p><strong>Seller:</strong> ${base.companyName}</p><p><strong>Buyer:</strong> ${base.buyerName}</p>
-        <h3 style="margin-top:20px">Article 1. Products & Quantity</h3>
-        <p>As per Proforma Invoice ${base.piNumber}</p>
-        <h3 style="margin-top:15px">Article 2. Price & Payment</h3>
-        <p>Total Amount: USD 4,850.00 / Payment: T/T 30% deposit, 70% before shipment</p>
-        <h3 style="margin-top:15px">Article 3. Delivery</h3>
-        <p>FOB Incheon, within 20 working days after deposit received</p>
-        <h3 style="margin-top:15px">Article 4. Quality</h3>
-        <p>Products shall conform to CGMP standards and comply with destination country regulations.</p>
-        <div style="display:flex;gap:80px;margin-top:40px"><div><p><strong>SELLER:</strong></p><br/><p>___________________</p><p>${base.companyName}</p></div><div><p><strong>BUYER:</strong></p><br/><p>___________________</p><p>${base.buyerName}</p></div></div>
-      </div>`;
-    case 'CI':
-      return `<div style="font-family:sans-serif;padding:20px;max-width:700px">
-        <h2 style="border-bottom:2px solid #333;padding-bottom:10px">COMMERCIAL INVOICE</h2>
-        <p><strong>Invoice No.:</strong> CI-${base.piNumber}</p><p><strong>Date:</strong> ${base.date}</p>
-        <p><strong>Exporter:</strong> ${base.companyName}, Seoul, South Korea</p>
-        <p><strong>Consignee:</strong> ${base.buyerName}</p>
-        <p><strong>Country of Origin:</strong> Republic of Korea</p><p><strong>HS Code:</strong> 3304.99</p>
-        <table style="width:100%;border-collapse:collapse;margin-top:15px">
-          <thead><tr style="background:#f5f5f5"><th style="border:1px solid #ddd;padding:8px;text-align:left">Description</th><th style="border:1px solid #ddd;padding:8px">Qty</th><th style="border:1px solid #ddd;padding:8px">Unit Price</th><th style="border:1px solid #ddd;padding:8px">Amount</th></tr></thead>
-          <tbody>
-            <tr><td style="border:1px solid #ddd;padding:8px">Hydra Serum 30ml</td><td style="border:1px solid #ddd;padding:8px;text-align:center">500</td><td style="border:1px solid #ddd;padding:8px;text-align:right">$4.50</td><td style="border:1px solid #ddd;padding:8px;text-align:right">$2,250</td></tr>
-            <tr><td style="border:1px solid #ddd;padding:8px">Glow Cream 50ml</td><td style="border:1px solid #ddd;padding:8px;text-align:center">500</td><td style="border:1px solid #ddd;padding:8px;text-align:right">$5.20</td><td style="border:1px solid #ddd;padding:8px;text-align:right">$2,600</td></tr>
-          </tbody>
-        </table>
-        <p style="text-align:right;margin-top:10px"><strong>Total: USD 4,850.00</strong></p>
-      </div>`;
-    case 'PL':
-      return `<div style="font-family:sans-serif;padding:20px;max-width:700px">
-        <h2 style="border-bottom:2px solid #333;padding-bottom:10px">PACKING LIST</h2>
-        <p><strong>PL No.:</strong> PL-${base.piNumber}</p><p><strong>Date:</strong> ${base.date}</p>
-        <table style="width:100%;border-collapse:collapse;margin-top:15px">
-          <thead><tr style="background:#f5f5f5"><th style="border:1px solid #ddd;padding:8px">Item</th><th style="border:1px solid #ddd;padding:8px">Qty</th><th style="border:1px solid #ddd;padding:8px">Cartons</th><th style="border:1px solid #ddd;padding:8px">G.W. (kg)</th><th style="border:1px solid #ddd;padding:8px">N.W. (kg)</th></tr></thead>
-          <tbody>
-            <tr><td style="border:1px solid #ddd;padding:8px">Hydra Serum 30ml</td><td style="border:1px solid #ddd;padding:8px;text-align:center">500</td><td style="border:1px solid #ddd;padding:8px;text-align:center">25</td><td style="border:1px solid #ddd;padding:8px;text-align:right">18.5</td><td style="border:1px solid #ddd;padding:8px;text-align:right">15.0</td></tr>
-            <tr><td style="border:1px solid #ddd;padding:8px">Glow Cream 50ml</td><td style="border:1px solid #ddd;padding:8px;text-align:center">500</td><td style="border:1px solid #ddd;padding:8px;text-align:center">25</td><td style="border:1px solid #ddd;padding:8px;text-align:right">27.5</td><td style="border:1px solid #ddd;padding:8px;text-align:right">25.0</td></tr>
-          </tbody>
-        </table>
-        <p style="text-align:right;margin-top:10px"><strong>Total: 50 Cartons / G.W. 46.0 kg</strong></p>
-      </div>`;
-    default:
-      return '<p>문서 내용이 준비 중입니다.</p>';
-  }
-}
+const DOC_TYPE_LABELS: Record<string, string> = {
+  PI: 'Proforma Invoice',
+  CI: 'Commercial Invoice',
+  PL: 'Packing List',
+  NDA: 'NDA',
+  SALES_CONTRACT: 'Sales Contract',
+  PROPOSAL: 'Business Proposal',
+  EMAIL: 'Email',
+  COMPLIANCE: 'Compliance Check',
+};
 
 // ──────────────────────────────────────────────────────────
 // Project Detail View (Stage-based Dynamic Tabs)
 // ──────────────────────────────────────────────────────────
 function ProjectDetailView({ project, onBack }: { project: ExportProject; onBack: () => void }) {
-  const previewRef = useRef<HTMLDivElement>(null);
-  const [downloading, setDownloading] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
-
-  const { active: activeTabs, history: historyTabs } = getTabsForStage(project.stage);
-  const [activeTabKey, setActiveTabKey] = useState(activeTabs[0]?.key || 'proposal');
-
-  const currentTab = [...activeTabs, ...historyTabs].find(t => t.key === activeTabKey);
-  const isHistoryDoc = historyTabs.some(t => t.key === activeTabKey);
-
-  // Check if AI-generated doc exists
-  const aiDoc = project.documents?.find((d: any) => d.docKey === currentTab?.docType);
-  const htmlContent = aiDoc ? (aiDoc as any).html : getDocHtml(currentTab?.docType || 'PROPOSAL', project);
-
-  // PDF Download
-  const handleDownloadPDF = useCallback(async () => {
-    if (!previewRef.current) return;
-    setDownloading(true);
-    try {
-      const { default: jsPDF } = await import('jspdf');
-      const { default: html2canvas } = await import('html2canvas');
-      const canvas = await html2canvas(previewRef.current, { scale: 2, useCORS: true, logging: false });
-      const imgData = canvas.toDataURL('image/jpeg', 0.98);
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      let heightLeft = pdfHeight;
-      let position = 0;
-      pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight);
-      heightLeft -= pageHeight;
-      while (heightLeft > 0) {
-        position -= pageHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight);
-        heightLeft -= pageHeight;
-      }
-      const filename = `${currentTab?.label || 'document'}_${project.project_name}.pdf`;
-      pdf.save(filename.replace(/\s+/g, '_'));
-      toast.success('PDF 다운로드 완료');
-    } catch (err) {
-      console.error('PDF generation failed:', err);
-      toast.error('PDF 생성에 실패했습니다.');
-    } finally {
-      setDownloading(false);
-    }
-  }, [currentTab, project.project_name]);
-
-  // Word Download
-  const handleDownloadWord = useCallback(async () => {
-    if (!previewRef.current) return;
-    setDownloading(true);
-    try {
-      const content = previewRef.current.innerHTML;
-      const preHtml = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><style>body{font-family:Arial,sans-serif;font-size:11pt;} table{border-collapse:collapse;width:100%;} td,th{border:1px solid #ccc;padding:4px 8px;font-size:10pt;}</style></head><body>`;
-      const postHtml = `</body></html>`;
-      const blob = new Blob([preHtml + content + postHtml], { type: 'application/msword' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const filename = `${currentTab?.label || 'document'}_${project.project_name}.doc`;
-      a.download = filename.replace(/\s+/g, '_');
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success('Word 다운로드 완료');
-    } catch (err) {
-      console.error('Word generation failed:', err);
-      toast.error('Word 생성에 실패했습니다.');
-    } finally {
-      setDownloading(false);
-    }
-  }, [currentTab, project.project_name]);
+  const savedDocs = (project.documents || []) as any[];
+  const [activeDocId, setActiveDocId] = useState<string | null>(savedDocs[0]?.id ?? null);
+  const activeDoc = savedDocs.find((d: any) => d.id === activeDocId) ?? null;
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -324,116 +95,139 @@ function ProjectDetailView({ project, onBack }: { project: ExportProject; onBack
         </div>
       </div>
 
-      {/* Document Tabs */}
-      <Tabs value={activeTabKey} onValueChange={setActiveTabKey} className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex-shrink-0 px-6 pt-3 border-b border-border bg-card/20">
-          <div className="flex items-center gap-2">
-            <TabsList className="h-10 flex-wrap">
-              {activeTabs.map(tab => (
-                <TabsTrigger key={tab.key} value={tab.key} className="text-xs gap-1">
-                  <span>{tab.emoji}</span> {tab.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-            {historyTabs.length > 0 && (
-              <Button
-                variant={showHistory ? 'secondary' : 'ghost'}
-                size="sm"
-                className="gap-1.5 text-xs ml-2 h-8"
-                onClick={() => setShowHistory(!showHistory)}
-              >
-                <History className="h-3.5 w-3.5" />
-                히스토리 ({historyTabs.length})
-              </Button>
-            )}
-          </div>
-
-          {/* History tabs row */}
-          {showHistory && historyTabs.length > 0 && (
-            <div className="flex items-center gap-2 mt-2 pb-2">
-              <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="text-[10px] text-muted-foreground mr-1">이전 단계:</span>
-              {historyTabs.map(tab => (
+      {/* 저장된 문서 목록 */}
+      {savedDocs.length > 0 ? (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* 문서 탭 */}
+          <div className="flex-shrink-0 px-6 pt-3 pb-2 border-b border-border bg-card/20">
+            <div className="flex items-center gap-2 flex-wrap">
+              {savedDocs.map((doc: any) => (
                 <Button
-                  key={tab.key}
-                  variant={activeTabKey === tab.key ? 'secondary' : 'outline'}
+                  key={doc.id}
+                  variant={activeDocId === doc.id ? 'default' : 'outline'}
                   size="sm"
-                  className="text-[11px] h-7 gap-1 opacity-80"
-                  onClick={() => setActiveTabKey(tab.key)}
+                  className="text-xs gap-1.5 h-8"
+                  onClick={() => setActiveDocId(doc.id)}
                 >
-                  <span>{tab.emoji}</span> {tab.label}
+                  <FileText className="h-3.5 w-3.5" />
+                  {DOC_TYPE_LABELS[doc.doc_type] || doc.doc_type}
+                  <span className="text-[10px] opacity-70">
+                    {doc.doc_number}
+                  </span>
                 </Button>
               ))}
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* Document Content */}
-        {[...activeTabs, ...historyTabs].map(tab => {
-          const tabAiDoc = project.documents?.find((d: any) => d.docKey === tab.docType);
-          const tabHtml = tabAiDoc ? (tabAiDoc as any).html : getDocHtml(tab.docType, project);
-          const isHistory = historyTabs.some(h => h.key === tab.key);
-
-          return (
-            <TabsContent key={tab.key} value={tab.key} className="flex-1 overflow-hidden m-0">
-              <ScrollArea className="h-full">
-                <div className="p-6">
-                  <div className="max-w-3xl mx-auto">
+          {/* 선택된 문서 상세 */}
+          <ScrollArea className="flex-1">
+            <div className="p-6">
+              <div className="max-w-3xl mx-auto">
+                {activeDoc ? (
+                  <>
                     <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2">
+                      <div>
                         <h2 className="text-base font-semibold text-foreground">
-                          {tab.emoji} {tab.label}
+                          {DOC_TYPE_LABELS[activeDoc.doc_type] || activeDoc.doc_type}
                         </h2>
-                        {tabAiDoc && (
-                          <Badge variant="outline" className="text-[10px] border-primary/40 text-primary bg-primary/5">
-                            ✨ AI 생성
-                          </Badge>
-                        )}
-                        {isHistory && (
-                          <Badge variant="secondary" className="text-[10px]">
-                            📁 읽기 전용
-                          </Badge>
-                        )}
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {activeDoc.doc_number} · {new Date(activeDoc.created_at).toLocaleDateString('ko-KR')}
+                        </p>
                       </div>
-                      {!isHistory && (
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="default"
-                            size="sm"
-                            className="gap-1.5"
-                            onClick={handleDownloadPDF}
-                            disabled={downloading}
-                          >
-                            <Download className="h-3.5 w-3.5" /> PDF
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-1.5"
-                            onClick={handleDownloadWord}
-                            disabled={downloading}
-                          >
-                            <FileDown className="h-3.5 w-3.5" /> Word
-                          </Button>
-                        </div>
-                      )}
+                      <Badge variant="outline" className="text-[10px] border-primary/40 text-primary bg-primary/5">
+                        AI 생성 문서
+                      </Badge>
                     </div>
-                    <Card className={cn("shadow-sm", isHistory && "opacity-75 border-dashed")}>
-                      <CardContent className="p-0">
-                        <div
-                          ref={tab.key === activeTabKey ? previewRef : undefined}
-                          className="p-4"
-                          dangerouslySetInnerHTML={{ __html: tabHtml }}
-                        />
+                    <Card className="shadow-sm">
+                      <CardContent className="p-4">
+                        <div className="text-sm text-muted-foreground space-y-2">
+                          {/* 문서 요약 정보 */}
+                          {activeDoc.data?.seller && (
+                            <div className="grid grid-cols-2 gap-4 border rounded-lg p-3">
+                              <div>
+                                <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1">Seller</p>
+                                <p className="text-sm font-medium text-foreground">{activeDoc.data.seller.company_name}</p>
+                                {activeDoc.data.seller.email && <p className="text-xs text-primary">{activeDoc.data.seller.email}</p>}
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-bold text-muted-foreground uppercase mb-1">Buyer</p>
+                                <p className="text-sm font-medium text-foreground">{activeDoc.data.buyer?.company_name}</p>
+                                {activeDoc.data.buyer?.country && <p className="text-xs">{activeDoc.data.buyer.country}</p>}
+                              </div>
+                            </div>
+                          )}
+                          {/* 품목 테이블 */}
+                          {activeDoc.data?.items && activeDoc.data.items.length > 0 && (
+                            <div className="border rounded-lg overflow-hidden">
+                              <table className="w-full text-xs">
+                                <thead>
+                                  <tr className="bg-muted/50">
+                                    <th className="py-2 px-3 text-left font-semibold">Product</th>
+                                    <th className="py-2 px-3 text-right font-semibold">Qty</th>
+                                    {activeDoc.doc_type !== 'PL' && (
+                                      <th className="py-2 px-3 text-right font-semibold">Amount</th>
+                                    )}
+                                    {activeDoc.doc_type === 'PL' && (
+                                      <>
+                                        <th className="py-2 px-3 text-right font-semibold">N.W.</th>
+                                        <th className="py-2 px-3 text-right font-semibold">G.W.</th>
+                                      </>
+                                    )}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {activeDoc.data.items.map((item: any, idx: number) => (
+                                    <tr key={idx} className="border-t">
+                                      <td className="py-1.5 px-3 font-medium">{item.product_name}</td>
+                                      <td className="py-1.5 px-3 text-right">{item.quantity?.toLocaleString()}</td>
+                                      {activeDoc.doc_type !== 'PL' && (
+                                        <td className="py-1.5 px-3 text-right font-semibold">
+                                          {item.quantity != null && item.unit_price != null
+                                            ? `${item.currency ?? 'USD'} ${(item.quantity * item.unit_price).toFixed(2)}`
+                                            : '—'}
+                                        </td>
+                                      )}
+                                      {activeDoc.doc_type === 'PL' && (
+                                        <>
+                                          <td className="py-1.5 px-3 text-right">{item.net_weight_kg?.toFixed(2) ?? '—'} kg</td>
+                                          <td className="py-1.5 px-3 text-right">{item.gross_weight_kg?.toFixed(2) ?? '—'} kg</td>
+                                        </>
+                                      )}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                          {/* Trade Terms */}
+                          {activeDoc.data?.trade_terms && (
+                            <div className="grid grid-cols-2 gap-2 text-xs mt-2">
+                              {activeDoc.data.trade_terms.incoterms && (
+                                <div><span className="text-muted-foreground">Incoterms:</span> <span className="font-medium">{activeDoc.data.trade_terms.incoterms}</span></div>
+                              )}
+                              {activeDoc.data.trade_terms.payment_terms && (
+                                <div><span className="text-muted-foreground">Payment:</span> <span className="font-medium">{activeDoc.data.trade_terms.payment_terms}</span></div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </CardContent>
                     </Card>
-                  </div>
-                </div>
-              </ScrollArea>
-            </TabsContent>
-          );
-        })}
-      </Tabs>
+                  </>
+                ) : (
+                  <p className="text-sm text-muted-foreground">문서를 선택하세요.</p>
+                )}
+              </div>
+            </div>
+          </ScrollArea>
+        </div>
+      ) : (
+        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
+          <FileText className="h-12 w-12 mb-3 opacity-20" />
+          <p className="text-sm font-medium">저장된 문서가 없습니다</p>
+          <p className="text-xs mt-1">AI 채팅에서 문서를 생성한 후 이 프로젝트에 저장하세요.</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -517,18 +311,19 @@ function DraggableCard({ project, onCardClick, onStageChange, onDelete, currentS
         )}
 
         {/* 저장된 문서 타입 배지 */}
-        {(project.documents || []).length > 0 && (
+        {(project.documents || []).length > 0 ? (
           <div className="flex flex-wrap gap-1 mb-2">
-            {(project.documents || []).map((doc: any, idx: number) => (
-              <Badge
-                key={idx}
-                variant="outline"
-                className="text-[9px] px-1.5 py-0 h-4 border-primary/30 text-primary bg-primary/5"
+            {(project.documents || []).map((doc: any) => (
+              <span
+                key={doc.id}
+                className="px-2 py-0.5 text-[9px] bg-violet-100 text-violet-700 rounded-full"
               >
-                {doc.doc_type || doc.docKey || '문서'}
-              </Badge>
+                {doc.doc_type} · {new Date(doc.created_at).toLocaleDateString('ko-KR')}
+              </span>
             ))}
           </div>
+        ) : (
+          <p className="text-[10px] text-muted-foreground/60 mb-2">저장된 문서 없음</p>
         )}
 
         <div className="flex items-center justify-between text-[11px] text-muted-foreground">
