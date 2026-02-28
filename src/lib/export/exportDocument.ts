@@ -321,7 +321,7 @@ td { border: 1px solid #bbb; padding: 5px 6px; }
       ${args.trade_terms.payment_terms ? `<div class="kv"><span class="kv-k">Payment:</span><span style="font-weight:600">${args.trade_terms.payment_terms}</span></div>` : ''}
       ${args.trade_terms.port_of_loading ? `<div class="kv"><span class="kv-k">Port of Loading:</span><span style="font-weight:600">${args.trade_terms.port_of_loading}</span></div>` : ''}
       ${args.trade_terms.port_of_discharge ? `<div class="kv"><span class="kv-k">Port of Discharge:</span><span style="font-weight:600">${args.trade_terms.port_of_discharge}</span></div>` : ''}
-      ${args.trade_terms.validity_date ? `<div class="kv"><span class="kv-k">Validity:</span><span style="font-weight:600">${args.trade_terms.validity_date}</span></div>` : ''}
+      ${docType === 'PI' && args.trade_terms.validity_date ? `<div class="kv"><span class="kv-k">Validity:</span><span style="font-weight:600">${args.trade_terms.validity_date}</span></div>` : ''}
     </div>
   </div>`
       : ''
@@ -957,7 +957,8 @@ function buildTradeDocDOCX(args: TradeDocArgs, docType: string): Document {
       ['Payment', tt.payment_terms],
       ['Port of Loading', tt.port_of_loading],
       ['Port of Discharge', tt.port_of_discharge],
-      ['Validity', tt.validity_date],
+      // Validity: PI일 때만 표시
+      ...(docType === 'PI' && tt.validity_date ? [['Validity', tt.validity_date] as [string, string]] : []),
     ];
     const validPairs = allPairs.filter(([, v]) => v);
     if (validPairs.length > 0) {
