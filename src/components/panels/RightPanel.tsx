@@ -548,7 +548,7 @@ function DocRenderer({
     return null;
   }, [toolCall.completedArgs, editedArgs]);
 
-  if (!data) return <FullSkeleton />;
+  if (!data) return <DocumentSkeleton docType={docType} />;
 
   if (toolCall.name === "check_compliance")
     return (
@@ -1841,10 +1841,6 @@ function DocumentSkeleton({ docType }: { docType: DocumentType }) {
       </div>
     </div>
   );
-}
-
-function FullSkeleton() {
-  return <DocumentSkeleton docType={null} />;
 }
 
 function Dots({ label }: { label: string }) {

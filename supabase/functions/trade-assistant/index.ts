@@ -155,14 +155,37 @@ PL 필수:
 
 ===== 응답 원칙 =====
 
-1. 서류 생성 요청 → generate_trade_document 반드시 호출 (텍스트 응답 금지)
-2. 규제 체크 요청 → check_compliance 반드시 호출
+1. 서류 생성 요청 → 반드시 한국어로 1-2문장 응답 텍스트를 먼저 출력한 후 generate_trade_document tool을 호출할 것.
+   예시: "네, Pacific Beauty에게 보낼 PI를 작성하겠습니다." 또는 "요청하신 CI를 생성하겠습니다."
+   이 텍스트 응답이 먼저 스트리밍되어야 사용자가 좌측 채팅에서 응답을 확인한 뒤 우측 패널에서 서류를 볼 수 있음.
+2. 규제 체크 요청 → 반드시 한국어로 1-2문장 응답 텍스트를 먼저 출력한 후 check_compliance tool을 호출할 것.
+   예시: "해당 제품의 미국 규제 적합성을 분석하겠습니다."
 3. 등록된 바이어/제품 데이터가 있으면 반드시 활용
 4. 미등록 정보는 [정보 등록 필요] 표시 후 설정 안내
 5. 한국어 질문 → 한국어 답변, 서류 자체는 영문 국제 표준
 6. 불명확한 정보 → 합리적으로 추정하여 완성도 높은 서류 생성 (빈칸 최소화)
 7. 수량/단가 미제시 → 이전 대화 또는 등록 데이터에서 추정
-8. 실무에서 바로 사용 가능한 완성도 목표`;
+8. 실무에서 바로 사용 가능한 완성도 목표
+
+===== PI 자동 기입 규칙 =====
+
+PI 생성 시 아래 항목을 항상 자동으로 채울 것:
+- validity_date: issue_date 기준 +30일 자동 계산 (예: issue_date가 2026-02-28이면 validity_date는 2026-03-30)
+- port_of_discharge: 바이어 국가 기반 자동 추정
+  미국 → Los Angeles Port
+  중국 → Shanghai Port
+  일본 → Tokyo Port
+  베트남 → Ho Chi Minh Port
+  UAE → Dubai Port
+  태국 → Bangkok Port
+  인도네시아 → Jakarta Port
+  싱가포르 → Singapore Port
+  말레이시아 → Port Klang
+  필리핀 → Manila Port
+  EU/유럽 → Rotterdam Port
+  기타 → "TBD (To be confirmed with buyer)"
+- port_of_loading: 별도 지정 없으면 "Busan Port, Korea" 기본값
+- 위 정보를 trade_terms 객체에 반드시 포함할 것`;
 }
 
 const TOOLS: Anthropic.Messages.Tool[] = [
@@ -211,7 +234,8 @@ const TOOLS: Anthropic.Messages.Tool[] = [
             incoterms:{type:"string",enum:["EXW","FCA","FOB","CFR","CIF","CPT","CIP","DAP","DPU","DDP"]},
             payment_terms:{type:"string"}, port_of_loading:{type:"string"},
             port_of_discharge:{type:"string"}, shipping_mark:{type:"string"},
-            etd:{type:"string"}, eta:{type:"string"}
+            etd:{type:"string"}, eta:{type:"string"},
+            validity_date:{type:"string",description:"PI 유효기간. issue_date +30일 자동 계산"}
           }
         },
         special_conditions:{type:"string"}, remarks:{type:"string"}
