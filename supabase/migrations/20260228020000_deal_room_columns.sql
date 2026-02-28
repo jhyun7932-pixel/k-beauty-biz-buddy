@@ -1,0 +1,6 @@
+-- Deal Room V1: 추가 컬럼
+ALTER TABLE export_projects
+  ADD COLUMN IF NOT EXISTS memo TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS timeline JSONB DEFAULT '[]',
+  ADD COLUMN IF NOT EXISTS buyer_country TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS product_list JSONB DEFAULT '[]';

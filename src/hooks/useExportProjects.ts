@@ -9,12 +9,16 @@ export interface ExportProject {
   project_name: string;
   buyer_id?: string;
   buyer_name?: string;
+  buyer_country?: string;
   stage: ProjectStage;
   total_amount?: number;
   currency: string;
   products: any[];
   documents: any[];
   notes?: string;
+  memo?: string;
+  timeline?: any[];
+  product_list?: any[];
   created_at: string;
   updated_at: string;
 }
