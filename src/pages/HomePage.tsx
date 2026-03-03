@@ -2,7 +2,6 @@
 
 import { useEffect } from "react";
 import { useStreamingChat } from "../hooks/useStreamingChat";
-import { useAuth } from "../hooks/useAuth";
 import { useBuyers } from "../hooks/useBuyers";
 import { useProducts } from "../hooks/useProducts";
 import { useAppStore } from "../stores/appStore";
@@ -10,8 +9,10 @@ import { useTradeStore } from "../stores/tradeStore";
 import ChatPanel from "../components/chat/ChatPanel";
 import RightPanel from "../components/panels/RightPanel";
 
+// 모듈 스코프 플래그 — HMR 리로드·StrictMode 이중실행·리마운트 모두 방어
+let dealRoomSentFlag = false;
+
 export default function HomePage() {
-  const { user } = useAuth();
   const {
     sendMessage,
     cancelStream,
@@ -33,20 +34,28 @@ export default function HomePage() {
   }, [loadProducts]);
 
   // 딜룸에서 전달된 pendingAgentMessage 자동 전송 (Zustand store 경유)
-  // user가 null이면 이 effect는 스킵됨.
-  // user가 null→User로 전환되면 sendMessage 참조도 바뀌므로 effect 재실행.
   const pendingAgentMessage = useTradeStore((s) => s.pendingAgentMessage);
   const setPendingAgentMessage = useTradeStore((s) => s.setPendingAgentMessage);
 
   useEffect(() => {
-    if (!pendingAgentMessage || !user || isStreaming) return;
+    if (dealRoomSentFlag) return;
+    if (!pendingAgentMessage) return;
+    if (typeof sendMessage !== "function") return;
 
+    // 전송 전 즉시 store 클리어 + 모듈 플래그 (재진입 완전 차단)
+    dealRoomSentFlag = true;
     const msg = pendingAgentMessage;
     setPendingAgentMessage(null);
 
-    console.log("[DealRoom] user ready, sending:", msg.slice(0, 60));
-    sendMessage(msg);
-  }, [pendingAgentMessage, user, isStreaming, sendMessage, setPendingAgentMessage]);
+    console.log("[DealRoom] sending (once):", msg.slice(0, 60));
+
+    // rAF로 DOM 안정화 후 1회만 전송
+    requestAnimationFrame(() => {
+      sendMessage(msg);
+      // 5초 후 플래그 리셋 (다음 딜룸 요청을 위해)
+      setTimeout(() => { dealRoomSentFlag = false; }, 5000);
+    });
+  }, [pendingAgentMessage]); // sendMessage 의존성 제거 — 재트리거 방지
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
