@@ -9,9 +9,6 @@ import { useTradeStore } from "../stores/tradeStore";
 import ChatPanel from "../components/chat/ChatPanel";
 import RightPanel from "../components/panels/RightPanel";
 
-// 모듈 스코프 플래그 — HMR 리로드·StrictMode 이중실행·리마운트 모두 방어
-let dealRoomSentFlag = false;
-
 export default function HomePage() {
   const {
     sendMessage,
@@ -38,24 +35,30 @@ export default function HomePage() {
   const setPendingAgentMessage = useTradeStore((s) => s.setPendingAgentMessage);
 
   useEffect(() => {
-    if (dealRoomSentFlag) return;
     if (!pendingAgentMessage) return;
     if (typeof sendMessage !== "function") return;
 
-    // 전송 전 즉시 store 클리어 + 모듈 플래그 (재진입 완전 차단)
-    dealRoomSentFlag = true;
+    // sessionStorage 원자적 잠금: HMR 모듈 재로드에도 유지됨
+    const LOCK_KEY = "flonix_dealroom_sending";
+    if (sessionStorage.getItem(LOCK_KEY)) {
+      console.log("[DealRoom] already sending, skip");
+      setPendingAgentMessage(null);
+      return;
+    }
+
+    // 잠금 설정 (3초 후 자동 해제)
+    sessionStorage.setItem(LOCK_KEY, "1");
+    setTimeout(() => sessionStorage.removeItem(LOCK_KEY), 3000);
+
     const msg = pendingAgentMessage;
     setPendingAgentMessage(null);
 
-    console.log("[DealRoom] sending (once):", msg.slice(0, 60));
+    console.log("[DealRoom] sending (locked):", msg.slice(0, 60));
 
-    // rAF로 DOM 안정화 후 1회만 전송
     requestAnimationFrame(() => {
       sendMessage(msg);
-      // 5초 후 플래그 리셋 (다음 딜룸 요청을 위해)
-      setTimeout(() => { dealRoomSentFlag = false; }, 5000);
     });
-  }, [pendingAgentMessage]); // sendMessage 의존성 제거 — 재트리거 방지
+  }, [pendingAgentMessage]);
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
