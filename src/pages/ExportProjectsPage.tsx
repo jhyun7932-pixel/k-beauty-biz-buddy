@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
 import { supabase } from "@/integrations/supabase/client";
 import { useExportProjects, type ExportProject } from "@/hooks/useExportProjects";
 import { useBuyers } from "@/hooks/useBuyers";
@@ -501,12 +502,20 @@ function DealRoomView({ project, onBack, onUpdateStage, onUpdateProject }: {
               </p>
               <button
                 onClick={() => {
+                  const autoMessage = `[딜룸 AI 안내 요청]
+바이어: ${project.buyer_name}
+현재 단계: ${stage.label}
+저장된 서류: ${docs.map((d: any) => d.doc_type).join(", ") || "없음"}
+
+${stage.hint}
+
+위 상황에서 구체적으로 무엇을 해야 할지 안내해줘.`;
+
                   localStorage.setItem("deal_room_context", JSON.stringify({
                     buyer: project.buyer_name,
                     stage: stage.label,
-                    hint: stage.hint,
                     project_id: project.id,
-                    auto_message: `[딜룸: ${project.buyer_name}] ${stage.hint}`,
+                    auto_message: autoMessage,
                   }));
                   navigate("/home");
                 }}
@@ -596,9 +605,9 @@ function DealRoomView({ project, onBack, onUpdateStage, onUpdateProject }: {
                   <div className="w-4 h-4 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
                 )}
               </div>
-              <p className="text-sm text-violet-800 leading-relaxed whitespace-pre-line">
-                {aiResponse || "분석중..."}
-              </p>
+              <div className="text-sm text-violet-800 leading-relaxed prose prose-sm prose-violet max-w-none">
+                <ReactMarkdown>{aiResponse || "분석중..."}</ReactMarkdown>
+              </div>
             </div>
           )}
 
@@ -673,9 +682,15 @@ function DealRoomView({ project, onBack, onUpdateStage, onUpdateProject }: {
                           })}
                         </span>
                       </div>
-                      <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-line">
-                        {entry.content}
-                      </p>
+                      {entry.type === "ai_response" ? (
+                        <div className="text-xs text-gray-700 leading-relaxed prose prose-xs max-w-none">
+                          <ReactMarkdown>{entry.content}</ReactMarkdown>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-line">
+                          {entry.content}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>

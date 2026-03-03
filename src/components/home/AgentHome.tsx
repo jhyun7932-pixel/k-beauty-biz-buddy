@@ -38,17 +38,25 @@ export function AgentHome({
   const [displayedText, setDisplayedText] = useState('');
   const [isTyping, setIsTyping] = useState(true);
 
-  // 딜룸에서 전달된 컨텍스트 자동 세팅
+  // 딜룸에서 전달된 컨텍스트 자동 전송
   useEffect(() => {
     const ctx = localStorage.getItem("deal_room_context");
-    if (ctx) {
-      try {
-        const parsed = JSON.parse(ctx);
-        if (parsed.auto_message) {
-          setInput(parsed.auto_message);
-        }
-      } catch { /* ignore */ }
+    if (!ctx) return;
+
+    try {
+      const parsed = JSON.parse(ctx);
       localStorage.removeItem("deal_room_context");
+
+      if (parsed.auto_message) {
+        setInput(parsed.auto_message);
+        // 렌더링 완료 후 자동 전송
+        setTimeout(() => {
+          onSendMessage(parsed.auto_message);
+          setInput('');
+        }, 300);
+      }
+    } catch (e) {
+      console.error("deal_room_context parse error:", e);
     }
   }, []);
 
