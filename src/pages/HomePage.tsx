@@ -21,7 +21,6 @@ export default function HomePage() {
     errorMessage,
   } = useStreamingChat();
 
-  // useBuyers auto-fetches on mount if authenticated
   const { buyers } = useBuyers();
   const { loadProducts } = useProducts();
   const productEntries = useAppStore((s) => s.productEntries);
@@ -30,35 +29,18 @@ export default function HomePage() {
     loadProducts();
   }, [loadProducts]);
 
-  // 딜룸에서 전달된 pendingAgentMessage 자동 전송 (Zustand store 경유)
-  const pendingAgentMessage = useTradeStore((s) => s.pendingAgentMessage);
-  const setPendingAgentMessage = useTradeStore((s) => s.setPendingAgentMessage);
+  // 딜룸 → 에이전트 홈 자동 전송
+  // consumePendingAgentMessage()는 원자적: 첫 호출만 msg 반환, 이후 null.
+  // HMR이 4번 마운트해도 store 싱글턴이므로 1번만 처리됨.
+  const consumePendingAgentMessage = useTradeStore((s) => s.consumePendingAgentMessage);
 
   useEffect(() => {
-    if (!pendingAgentMessage) return;
-    if (typeof sendMessage !== "function") return;
+    const msg = consumePendingAgentMessage();
+    if (!msg) return;
 
-    // sessionStorage 원자적 잠금: HMR 모듈 재로드에도 유지됨
-    const LOCK_KEY = "flonix_dealroom_sending";
-    if (sessionStorage.getItem(LOCK_KEY)) {
-      console.log("[DealRoom] already sending, skip");
-      setPendingAgentMessage(null);
-      return;
-    }
-
-    // 잠금 설정 (3초 후 자동 해제)
-    sessionStorage.setItem(LOCK_KEY, "1");
-    setTimeout(() => sessionStorage.removeItem(LOCK_KEY), 3000);
-
-    const msg = pendingAgentMessage;
-    setPendingAgentMessage(null);
-
-    console.log("[DealRoom] sending (locked):", msg.slice(0, 60));
-
-    requestAnimationFrame(() => {
-      sendMessage(msg);
-    });
-  }, [pendingAgentMessage]);
+    console.log("[DealRoom] consumed once:", msg.slice(0, 60));
+    requestAnimationFrame(() => sendMessage(msg));
+  }, []); // 마운트 1회만
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
