@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useExportProjects, type ExportProject } from "@/hooks/useExportProjects";
 import { useBuyers } from "@/hooks/useBuyers";
 import { useAppStore } from "@/stores/appStore";
+import { useTradeStore } from "@/stores/tradeStore";
 
 // ── 상수 정의 ──────────────────────────────────────────
 const STAGES = [
@@ -300,6 +301,7 @@ function DealRoomView({ project, onBack, onUpdateStage, onUpdateProject }: {
   onUpdateProject: (updates: Partial<ExportProject>) => Promise<void>;
 }) {
   const navigate = useNavigate();
+  const setPendingAgentMessage = useTradeStore(s => s.setPendingAgentMessage);
   const stage = STAGES.find(s => s.key === project.stage) || STAGES[0];
   const stageIdx = STAGES.findIndex(s => s.key === project.stage);
   const docs = (project.documents as any[]) || [];
@@ -511,12 +513,7 @@ ${stage.hint}
 
 위 상황에서 구체적으로 무엇을 해야 할지 안내해줘.`;
 
-                  localStorage.setItem("deal_room_context", JSON.stringify({
-                    buyer: project.buyer_name,
-                    stage: stage.label,
-                    project_id: project.id,
-                    auto_message: autoMessage,
-                  }));
+                  setPendingAgentMessage(autoMessage);
                   navigate("/home");
                 }}
                 className="mt-2 w-full text-xs bg-violet-600 text-white py-1.5 rounded-lg hover:bg-violet-700"
