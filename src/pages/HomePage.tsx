@@ -1,7 +1,6 @@
 // 메인 페이지 - 좌측 채팅 + 우측 문서 패널 통합
 
-import { useEffect } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useRef } from "react";
 import { useStreamingChat } from "../hooks/useStreamingChat";
 import { useBuyers } from "../hooks/useBuyers";
 import { useProducts } from "../hooks/useProducts";
@@ -21,8 +20,6 @@ export default function HomePage() {
     errorMessage,
   } = useStreamingChat();
 
-  const location = useLocation();
-  const navigate = useNavigate();
   const { buyers } = useBuyers();
   const { loadProducts } = useProducts();
   const productEntries = useAppStore((s) => s.productEntries);
@@ -31,26 +28,31 @@ export default function HomePage() {
     loadProducts();
   }, [loadProducts]);
 
-  // 딜룸에서 URL 파라미터로 전달된 AI 요청 처리
+  const dealRoomMsgRef = useRef<string | null>(null);
+
+  // STEP 1: 마운트 시 URL에서 q값 추출 → ref에 저장 + URL 클린업
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
+    const params = new URLSearchParams(window.location.search);
     const q = params.get('q');
     if (!q) return;
+
+    dealRoomMsgRef.current = decodeURIComponent(q);
+
+    // URL 즉시 클린업 (React navigate 없이 직접 히스토리 교체 → 리렌더링 없음)
+    window.history.replaceState({}, '', '/home');
+  }, []); // 마운트 1회만
+
+  // STEP 2: sendMessage 준비되면 ref에서 꺼내 전송
+  useEffect(() => {
+    if (!dealRoomMsgRef.current) return;
     if (typeof sendMessage !== 'function') return;
 
-    // 1. q값 즉시 로컬 변수에 저장 (URL 변경과 무관)
-    const message = decodeURIComponent(q);
+    const message = dealRoomMsgRef.current;
+    dealRoomMsgRef.current = null; // 소비 후 즉시 초기화 → 중복 전송 방지
 
-    // 2. URL 클린업 (히스토리 교체)
-    navigate('/home', { replace: true });
-
-    // 3. 다음 틱에 sendMessage 실행
-    //    (navigate의 리렌더링과 충돌 방지)
-    setTimeout(() => {
-      console.log('[DealRoom] URL param received, sending:', message.slice(0, 30));
-      sendMessage(message);
-    }, 100);
-  }, [location.search]);
+    console.log('[DealRoom] sending:', message.slice(0, 30));
+    sendMessage(message);
+  }, [sendMessage]); // sendMessage가 준비됐을 때 실행
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
