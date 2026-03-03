@@ -1,11 +1,9 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { supabase } from "@/integrations/supabase/client";
 import { useExportProjects, type ExportProject } from "@/hooks/useExportProjects";
 import { useBuyers } from "@/hooks/useBuyers";
 import { useAppStore } from "@/stores/appStore";
-import { useTradeStore } from "@/stores/tradeStore";
 
 // ── 상수 정의 ──────────────────────────────────────────
 const STAGES = [
@@ -300,8 +298,6 @@ function DealRoomView({ project, onBack, onUpdateStage, onUpdateProject }: {
   onUpdateStage: (stage: StageKey) => Promise<void>;
   onUpdateProject: (updates: Partial<ExportProject>) => Promise<void>;
 }) {
-  const navigate = useNavigate();
-  const setPendingAgentMessage = useTradeStore(s => s.setPendingAgentMessage);
   const stage = STAGES.find(s => s.key === project.stage) || STAGES[0];
   const stageIdx = STAGES.findIndex(s => s.key === project.stage);
   const docs = (project.documents as any[]) || [];
@@ -428,6 +424,97 @@ function DealRoomView({ project, onBack, onUpdateStage, onUpdateProject }: {
     }
   }
 
+  // "AI에게 요청" 버튼: 딜룸 내에서 직접 AI 호출 (navigate 없음)
+  async function handleAIRequest() {
+    if (loadingAI) return;
+
+    const autoMessage = `바이어 ${project.buyer_name} | 현재단계: ${stage.label}
+저장된 서류: ${docs.map((d: any) => d.doc_type).join(", ") || "없음"}
+
+${stage.hint}
+
+위 상황에서 지금 당장 해야 할 구체적인 다음 액션을 알려줘.`;
+
+    setLoadingAI(true);
+    setAiResponse(null);
+
+    const memoEntry = {
+      id: crypto.randomUUID(),
+      type: "memo",
+      content: `[AI 안내 요청] ${stage.label} 단계`,
+      created_at: new Date().toISOString(),
+    };
+    const timelineWithMemo = [...timeline, memoEntry];
+    setTimeline(timelineWithMemo);
+    await onUpdateProject({ timeline: timelineWithMemo } as any);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("No session");
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/trade-assistant`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            messages: [{ role: "user", content: autoMessage }],
+            mode: "deal_room_advice",
+          }),
+        }
+      );
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.body) throw new Error("No response body");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullText = "";
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("event:")) continue;
+          if (trimmed.startsWith("data: ")) {
+            const jsonStr = trimmed.slice(6).trim();
+            if (!jsonStr || jsonStr === "[DONE]") continue;
+            try {
+              const data = JSON.parse(jsonStr);
+              if (data.text) { fullText += data.text; setAiResponse(fullText); }
+              else if (data.delta?.text) { fullText += data.delta.text; setAiResponse(fullText); }
+            } catch { /* skip */ }
+          }
+        }
+      }
+
+      if (fullText) {
+        const aiEntry = {
+          id: crypto.randomUUID(),
+          type: "ai_response",
+          content: fullText,
+          created_at: new Date().toISOString(),
+        };
+        const finalTimeline = [...timelineWithMemo, aiEntry];
+        setTimeline(finalTimeline);
+        await onUpdateProject({ timeline: finalTimeline } as any);
+      }
+    } catch (error) {
+      console.error("Deal room AI request error:", error);
+      setAiResponse(`오류: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
+    } finally {
+      setLoadingAI(false);
+    }
+  }
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* 상단 헤더 */}
@@ -503,22 +590,11 @@ function DealRoomView({ project, onBack, onUpdateStage, onUpdateProject }: {
                 {stage.hint}
               </p>
               <button
-                onClick={() => {
-                  const autoMessage = `[딜룸 AI 안내 요청]
-바이어: ${project.buyer_name}
-현재 단계: ${stage.label}
-저장된 서류: ${docs.map((d: any) => d.doc_type).join(", ") || "없음"}
-
-${stage.hint}
-
-위 상황에서 구체적으로 무엇을 해야 할지 안내해줘.`;
-
-                  setPendingAgentMessage(autoMessage);
-                  navigate("/home");
-                }}
-                className="mt-2 w-full text-xs bg-violet-600 text-white py-1.5 rounded-lg hover:bg-violet-700"
+                onClick={handleAIRequest}
+                disabled={loadingAI}
+                className="mt-2 w-full text-xs bg-violet-600 text-white py-1.5 rounded-lg hover:bg-violet-700 disabled:opacity-50"
               >
-                AI에게 요청 →
+                {loadingAI ? "AI 분석중..." : "AI에게 요청 →"}
               </button>
             </div>
           </div>

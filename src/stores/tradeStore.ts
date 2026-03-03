@@ -110,9 +110,6 @@ interface TradeStore {
   partialDocumentJson: string;
   complianceResult: ComplianceResult|null;
   errorMessage: string|null;
-  pendingAgentMessage: string|null;
-  setPendingAgentMessage: (msg:string|null)=>void;
-  consumePendingAgentMessage: ()=>string|null;
   addUserMessage: (content:string)=>void;
   addAssistantMessage: (content:string)=>void;
   onStreamConnecting: ()=>void;
@@ -133,9 +130,6 @@ export const useTradeStore = create<TradeStore>()(
       messages: [], streamingText: "", streamPhase: "idle",
       rightPanelOpen: false, activeToolName: null, activeToolId: null,
       currentDocument: null, partialDocumentJson: "", complianceResult: null, errorMessage: null,
-      pendingAgentMessage: null,
-      setPendingAgentMessage: (msg) => set({ pendingAgentMessage: msg }),
-      consumePendingAgentMessage: () => { const msg = get().pendingAgentMessage; if (!msg) return null; set({ pendingAgentMessage: null }); return msg; },
 
       addUserMessage: (content) => set(s=>({ messages:[...s.messages,{id:crypto.randomUUID(),role:"user",content,timestamp:new Date()}] })),
       addAssistantMessage: (content) => set(s=>({ messages:[...s.messages,{id:crypto.randomUUID(),role:"assistant",content,timestamp:new Date()}], streamingText:"" })),
