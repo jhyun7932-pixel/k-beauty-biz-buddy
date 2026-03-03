@@ -313,98 +313,115 @@ function DealRoomView({ project, onBack, onUpdateStage, onUpdateProject }: {
 
   // AI 메모 응답 요청
   async function handleMemoSubmit() {
-    if (!memo.trim()) return;
+    if (!memo.trim() || loadingAI) return;
     setLoadingAI(true);
     setAiResponse(null);
 
-    // 타임라인에 메모 추가
-    const newEntry = {
+    const currentMemo = memo;
+    setMemo("");
+
+    // 타임라인에 메모 즉시 추가
+    const memoEntry = {
       id: crypto.randomUUID(),
       type: "memo",
-      content: memo,
+      content: currentMemo,
       created_at: new Date().toISOString(),
     };
-    const updatedTimeline = [...timeline, newEntry];
-    setTimeline(updatedTimeline);
-    await onUpdateProject({ timeline: updatedTimeline } as any);
+    const timelineWithMemo = [...timeline, memoEntry];
+    setTimeline(timelineWithMemo);
+    await onUpdateProject({ timeline: timelineWithMemo } as any);
 
-    // AI에게 컨텍스트와 함께 전달
     try {
-      const context = `
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("No session");
+
+      const contextMessage = `당신은 K-뷰티 수출 전문가입니다.
+
 딜 정보:
 - 바이어: ${project.buyer_name || project.project_name}
 - 현재 단계: ${stage.label} (${stage.desc})
 - 저장된 서류: ${docs.map((d: any) => d.doc_type).join(", ") || "없음"}
-- 거래금액: ${project.total_amount ? `${project.currency} ${project.total_amount}` : "미정"}
 
-오늘의 상황:
-${memo}
+담당자가 전한 오늘의 상황:
+"${currentMemo}"
 
 위 상황에서 무역 전문가로서 다음 액션을 구체적으로 안내해줘.
-어떤 서류가 필요한지, 다음 단계는 무엇인지,
-주의해야 할 사항이 있는지 한국어로 간결하게 답해줘.
-(3~5줄 이내로)
-`;
+어떤 서류가 필요한지, 다음 단계는 무엇인지, 주의사항은 무엇인지
+한국어로 3~5줄로 간결하게 답해줘.`;
 
-      const { data: { session } } = await supabase.auth.getSession();
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/trade-assistant`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${session?.access_token}`,
+            "Authorization": `Bearer ${session.access_token}`,
           },
           body: JSON.stringify({
-            messages: [{ role: "user", content: context }],
+            messages: [{ role: "user", content: contextMessage }],
             mode: "deal_room_advice",
           }),
         }
       );
 
-      // SSE 스트리밍 파싱
-      const reader = response.body?.getReader();
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      if (!response.body) throw new Error("No response body");
+
+      const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullText = "";
+      let buffer = "";
 
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value);
-          const lines = chunk.split("\n");
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.type === "text_delta") {
-                  fullText += data.text;
-                  setAiResponse(fullText);
-                }
-              } catch {
-                // skip malformed JSON lines
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("event:")) continue;
+
+          if (trimmed.startsWith("data: ")) {
+            const jsonStr = trimmed.slice(6).trim();
+            if (!jsonStr || jsonStr === "[DONE]") continue;
+            try {
+              const data = JSON.parse(jsonStr);
+              // SSE format: event: text_delta → data: {"text":"..."}
+              if (data.text) {
+                fullText += data.text;
+                setAiResponse(fullText);
+              } else if (data.delta?.text) {
+                fullText += data.delta.text;
+                setAiResponse(fullText);
               }
+            } catch {
+              // skip malformed JSON
             }
           }
         }
       }
 
-      // AI 응답을 타임라인에 추가
-      const aiEntry = {
-        id: crypto.randomUUID(),
-        type: "ai_response",
-        content: fullText,
-        created_at: new Date().toISOString(),
-      };
-      const finalTimeline = [...updatedTimeline, aiEntry];
-      setTimeline(finalTimeline);
-      await onUpdateProject({ timeline: finalTimeline } as any);
+      // 스트리밍 완료 후 AI 응답 타임라인 저장
+      if (fullText) {
+        const aiEntry = {
+          id: crypto.randomUUID(),
+          type: "ai_response",
+          content: fullText,
+          created_at: new Date().toISOString(),
+        };
+        const finalTimeline = [...timelineWithMemo, aiEntry];
+        setTimeline(finalTimeline);
+        await onUpdateProject({ timeline: finalTimeline } as any);
+      }
 
-    } catch {
-      setAiResponse("AI 응답을 가져오는 중 오류가 발생했습니다.");
+    } catch (error) {
+      console.error("Deal room AI error:", error);
+      setAiResponse(`오류가 발생했습니다: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
     } finally {
       setLoadingAI(false);
-      setMemo("");
     }
   }
 
@@ -489,6 +506,7 @@ ${memo}
                     stage: stage.label,
                     hint: stage.hint,
                     project_id: project.id,
+                    auto_message: `[딜룸: ${project.buyer_name}] ${stage.hint}`,
                   }));
                   navigate("/home");
                 }}

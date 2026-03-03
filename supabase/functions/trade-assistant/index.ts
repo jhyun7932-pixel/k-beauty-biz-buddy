@@ -343,7 +343,8 @@ Deno.serve(async (req: Request) => {
     if (authError || !user) throw new Error("인증 실패: 다시 로그인해주세요");
 
     const body = await req.json();
-    const { messages: rawMessages = [], hasFile = false } = body;
+    const { messages: rawMessages = [], hasFile = false, mode } = body;
+    const isDealRoomMode = mode === "deal_room_advice";
     const userContext = await fetchUserContext(user.id);
     const trimmedMessages = trimHistory(rawMessages, hasFile);
     const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
@@ -359,9 +360,14 @@ Deno.serve(async (req: Request) => {
           while (loopCount < MAX_AGENTIC_LOOPS) {
             loopCount++;
             const streamResponse = await anthropic.messages.create({
-              model: MODEL, max_tokens: MAX_TOKENS,
-              system: buildSystemPrompt(userContext),
-              tools: TOOLS, messages: currentMessages, stream: true,
+              model: MODEL,
+              max_tokens: isDealRoomMode ? 1024 : MAX_TOKENS,
+              system: isDealRoomMode
+                ? "당신은 K-뷰티 수출 전문가입니다. 간결하고 실용적인 조언을 한국어로 제공하세요. 3~5줄 이내로 답변하세요."
+                : buildSystemPrompt(userContext),
+              ...(isDealRoomMode ? {} : { tools: TOOLS }),
+              messages: currentMessages,
+              stream: true,
             });
 
             let currentText = "", currentToolName = "", currentToolId = "", currentToolInput = "", stopReason = "";

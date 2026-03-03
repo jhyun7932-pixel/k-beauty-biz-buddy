@@ -38,6 +38,20 @@ export function AgentHome({
   const [displayedText, setDisplayedText] = useState('');
   const [isTyping, setIsTyping] = useState(true);
 
+  // 딜룸에서 전달된 컨텍스트 자동 세팅
+  useEffect(() => {
+    const ctx = localStorage.getItem("deal_room_context");
+    if (ctx) {
+      try {
+        const parsed = JSON.parse(ctx);
+        if (parsed.auto_message) {
+          setInput(parsed.auto_message);
+        }
+      } catch { /* ignore */ }
+      localStorage.removeItem("deal_room_context");
+    }
+  }, []);
+
   // Typewriter effect for placeholder
   useEffect(() => {
     const currentPrompt = EXAMPLE_PROMPTS[currentPromptIndex];
