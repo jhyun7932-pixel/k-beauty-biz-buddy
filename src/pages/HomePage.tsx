@@ -38,13 +38,18 @@ export default function HomePage() {
     if (!q) return;
     if (typeof sendMessage !== 'function') return;
 
-    // URL 즉시 클린업 (히스토리 교체, 뒤로가기 방지)
+    // 1. q값 즉시 로컬 변수에 저장 (URL 변경과 무관)
+    const message = decodeURIComponent(q);
+
+    // 2. URL 클린업 (히스토리 교체)
     navigate('/home', { replace: true });
 
-    // 다음 프레임에 전송 (DOM 완전 마운트 보장)
-    requestAnimationFrame(() => {
-      sendMessage(q);
-    });
+    // 3. 다음 틱에 sendMessage 실행
+    //    (navigate의 리렌더링과 충돌 방지)
+    setTimeout(() => {
+      console.log('[DealRoom] URL param received, sending:', message.slice(0, 30));
+      sendMessage(message);
+    }, 100);
   }, [location.search]);
 
   return (
