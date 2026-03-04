@@ -11,7 +11,8 @@ export function useStreamingChat() {
   const store = useTradeStore();
 
   const sendMessage = useCallback(async (content: string) => {
-    if (!user || !content.trim()) return;
+    const { data: { session: currentSession } } = await supabase.auth.getSession();
+    if (!currentSession?.user || !content.trim()) return;
     const phase = store.streamPhase ?? "idle";
     if (!["idle","complete","error"].includes(phase)) return;
 
@@ -99,7 +100,7 @@ export function useStreamingChat() {
       if ((err as Error).name === "AbortError") { store.resetStream(); return; }
       store.onStreamError(err instanceof Error ? err.message : "연결 오류");
     }
-  }, [user, store]);
+  }, [store]);
 
   const cancelStream = useCallback(() => {
     abortRef.current?.abort();
