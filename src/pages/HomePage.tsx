@@ -1,12 +1,19 @@
 // 메인 페이지 - 좌측 채팅 + 우측 문서 패널 통합
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useStreamingChat } from "../hooks/useStreamingChat";
 import { useBuyers } from "../hooks/useBuyers";
 import { useProducts } from "../hooks/useProducts";
 import { useAppStore } from "../stores/appStore";
 import ChatPanel from "../components/chat/ChatPanel";
 import RightPanel from "../components/panels/RightPanel";
+
+// 모듈 스코프 싱글턴 - HMR 재로드 시에도 모듈 캐시에 유지됨
+let _dealRoomPendingMsg: string | null = null;
+
+export function setDealRoomMessage(msg: string) {
+  _dealRoomPendingMsg = msg;
+}
 
 export default function HomePage() {
   const {
@@ -28,31 +35,32 @@ export default function HomePage() {
     loadProducts();
   }, [loadProducts]);
 
-  const dealRoomMsgRef = useRef<string | null>(null);
-
-  // STEP 1: 마운트 시 URL에서 q값 추출 → ref에 저장 + URL 클린업
+  // 마운트 시 URL에서 q 추출 → 모듈 변수에 저장
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const q = params.get('q');
-    if (!q) return;
+    if (q) {
+      _dealRoomPendingMsg = decodeURIComponent(q);
+      window.history.replaceState({}, '', '/home');
+    }
+  }, []);
 
-    dealRoomMsgRef.current = decodeURIComponent(q);
-
-    // URL 즉시 클린업 (React navigate 없이 직접 히스토리 교체 → 리렌더링 없음)
-    window.history.replaceState({}, '', '/home');
-  }, []); // 마운트 1회만
-
-  // STEP 2: sendMessage 준비되면 ref에서 꺼내 전송
+  // sendMessage 준비 완료 시 전송
   useEffect(() => {
-    if (!dealRoomMsgRef.current) return;
+    if (!_dealRoomPendingMsg) return;
     if (typeof sendMessage !== 'function') return;
 
-    const message = dealRoomMsgRef.current;
-    dealRoomMsgRef.current = null; // 소비 후 즉시 초기화 → 중복 전송 방지
+    const msg = _dealRoomPendingMsg;
+    _dealRoomPendingMsg = null;
 
-    console.log('[DealRoom] sending:', message.slice(0, 30));
-    sendMessage(message);
-  }, [sendMessage]); // sendMessage가 준비됐을 때 실행
+    // sendMessage가 완전히 준비된 후 실행 보장
+    const timer = setTimeout(() => {
+      console.log('[DealRoom] sending (final):', msg.slice(0, 30));
+      sendMessage(msg);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [sendMessage]);
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
