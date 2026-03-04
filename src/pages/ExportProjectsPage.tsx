@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useExportProjects, type ExportProject } from "@/hooks/useExportProjects";
 import { useBuyers } from "@/hooks/useBuyers";
 import { useAppStore } from "@/stores/appStore";
-import { setDealRoomMessage } from "./HomePage";
+import { setDealRoomMessage } from "@/lib/dealRoomBridge";
 
 // ── 상수 정의 ──────────────────────────────────────────
 const STAGES = [

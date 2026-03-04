@@ -7,13 +7,7 @@ import { useProducts } from "../hooks/useProducts";
 import { useAppStore } from "../stores/appStore";
 import ChatPanel from "../components/chat/ChatPanel";
 import RightPanel from "../components/panels/RightPanel";
-
-// 모듈 스코프 싱글턴 - HMR 재로드 시에도 모듈 캐시에 유지됨
-let _dealRoomPendingMsg: string | null = null;
-
-export function setDealRoomMessage(msg: string) {
-  _dealRoomPendingMsg = msg;
-}
+import { consumeDealRoomMessage } from "@/lib/dealRoomBridge";
 
 export default function HomePage() {
   const {
@@ -35,30 +29,26 @@ export default function HomePage() {
     loadProducts();
   }, [loadProducts]);
 
-  // 마운트 시 URL에서 q 추출 → 모듈 변수에 저장
+  // 마운트 시 URL fallback 클린업
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const q = params.get('q');
     if (q) {
-      _dealRoomPendingMsg = decodeURIComponent(q);
       window.history.replaceState({}, '', '/home');
     }
   }, []);
 
-  // sendMessage 준비 완료 시 전송
+  // sendMessage 준비 완료 시 bridge에서 꺼내 전송
   // streamPhase가 undefined→"idle"로 바뀌는 순간 자동 재실행됨
   useEffect(() => {
-    if (!_dealRoomPendingMsg) return;
     if (typeof sendMessage !== 'function') return;
-
-    // streamPhase가 idle/complete/error일 때만 전송
     const phase = streamPhase ?? "idle";
     if (!["idle", "complete", "error"].includes(phase)) return;
 
-    const msg = _dealRoomPendingMsg;
-    _dealRoomPendingMsg = null;
+    const msg = consumeDealRoomMessage();
+    if (!msg) return;
 
-    console.log('[DealRoom] sending final:', msg.slice(0, 30));
+    console.log('[DealRoom] sending:', msg.slice(0, 30));
     sendMessage(msg);
   }, [sendMessage, streamPhase]);
 
