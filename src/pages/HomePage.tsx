@@ -7,7 +7,7 @@ import { useProducts } from "../hooks/useProducts";
 import { useAppStore } from "../stores/appStore";
 import ChatPanel from "../components/chat/ChatPanel";
 import RightPanel from "../components/panels/RightPanel";
-import { consumeDealRoomMessage } from "@/lib/dealRoomBridge";
+import { registerSendMessage, unregisterSendMessage } from "@/lib/dealRoomBridge";
 
 export default function HomePage() {
   const {
@@ -29,27 +29,14 @@ export default function HomePage() {
     loadProducts();
   }, [loadProducts]);
 
-  // 마운트 시 URL fallback 클린업
+  // sendMessage 등록: streamPhase가 전송 가능 상태일 때만 bridge에 등록
+  // 대기 중인 메시지가 있으면 registerSendMessage 내부에서 즉시 전송
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const q = params.get('q');
-    if (q) {
-      window.history.replaceState({}, '', '/home');
-    }
-  }, []);
-
-  // sendMessage 준비 완료 시 bridge에서 꺼내 전송
-  // streamPhase가 undefined→"idle"로 바뀌는 순간 자동 재실행됨
-  useEffect(() => {
-    if (typeof sendMessage !== 'function') return;
     const phase = streamPhase ?? "idle";
-    if (!["idle", "complete", "error"].includes(phase)) return;
-
-    const msg = consumeDealRoomMessage();
-    if (!msg) return;
-
-    console.log('[DealRoom] sending:', msg.slice(0, 30));
-    sendMessage(msg);
+    if (["idle", "complete", "error"].includes(phase)) {
+      registerSendMessage(sendMessage);
+    }
+    return () => unregisterSendMessage();
   }, [sendMessage, streamPhase]);
 
   return (
