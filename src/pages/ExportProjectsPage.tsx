@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useExportProjects, type ExportProject } from "@/hooks/useExportProjects";
 import { useBuyers } from "@/hooks/useBuyers";
 import { useAppStore } from "@/stores/appStore";
-import { triggerDealRoomMessage } from "@/lib/dealRoomBridge";
+import { useTradeStore } from "@/stores/tradeStore";
 
 // ── 상수 정의 ──────────────────────────────────────────
 const STAGES = [
@@ -427,6 +427,7 @@ function DealRoomView({ project, onBack, onUpdateStage, onUpdateProject }: {
   }
 
   const navigate = useNavigate();
+  const setPendingAutoMessage = useTradeStore((s) => s.setPendingAutoMessage);
 
   function handleAIRequest() {
     const autoMessage = `[딜룸 AI 안내 요청]
@@ -438,7 +439,7 @@ ${stage.hint}
 
 위 상황에서 지금 당장 해야 할 구체적인 다음 액션을 알려줘.`;
 
-    triggerDealRoomMessage(autoMessage);
+    setPendingAutoMessage(autoMessage);
     navigate('/home');
   }
 

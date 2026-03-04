@@ -7,7 +7,7 @@ import { useProducts } from "../hooks/useProducts";
 import { useAppStore } from "../stores/appStore";
 import ChatPanel from "../components/chat/ChatPanel";
 import RightPanel from "../components/panels/RightPanel";
-import { registerSendMessage, unregisterSendMessage } from "@/lib/dealRoomBridge";
+import { useTradeStore } from "../stores/tradeStore";
 
 export default function HomePage() {
   const {
@@ -25,19 +25,25 @@ export default function HomePage() {
   const { loadProducts } = useProducts();
   const productEntries = useAppStore((s) => s.productEntries);
 
+  const pendingAutoMessage = useTradeStore((s) => s.pendingAutoMessage);
+  const setPendingAutoMessage = useTradeStore((s) => s.setPendingAutoMessage);
+
   useEffect(() => {
     loadProducts();
   }, [loadProducts]);
 
-  // sendMessage 등록: streamPhase가 전송 가능 상태일 때만 bridge에 등록
-  // 대기 중인 메시지가 있으면 registerSendMessage 내부에서 즉시 전송
+  // 딜룸에서 저장된 pendingAutoMessage를 streamPhase가 준비되면 전송
   useEffect(() => {
+    if (!pendingAutoMessage) return;
     const phase = streamPhase ?? "idle";
-    if (["idle", "complete", "error"].includes(phase)) {
-      registerSendMessage(sendMessage);
-    }
-    return () => unregisterSendMessage();
-  }, [sendMessage, streamPhase]);
+    if (!["idle", "complete", "error"].includes(phase)) return;
+
+    const msg = pendingAutoMessage;
+    setPendingAutoMessage(null);
+
+    console.log("[DealRoom] sending:", msg.slice(0, 30));
+    sendMessage(msg);
+  }, [pendingAutoMessage, streamPhase, sendMessage, setPendingAutoMessage]);
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
