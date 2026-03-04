@@ -12,7 +12,8 @@ export function useStreamingChat() {
 
   const sendMessage = useCallback(async (content: string) => {
     if (!user || !content.trim()) return;
-    if (!["idle","complete","error"].includes(store.streamPhase)) return;
+    const phase = store.streamPhase ?? "idle";
+    if (!["idle","complete","error"].includes(phase)) return;
 
     abortRef.current?.abort();
     abortRef.current = new AbortController();

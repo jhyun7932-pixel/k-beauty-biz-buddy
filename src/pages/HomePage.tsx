@@ -46,21 +46,21 @@ export default function HomePage() {
   }, []);
 
   // sendMessage 준비 완료 시 전송
+  // streamPhase가 undefined→"idle"로 바뀌는 순간 자동 재실행됨
   useEffect(() => {
     if (!_dealRoomPendingMsg) return;
     if (typeof sendMessage !== 'function') return;
 
+    // streamPhase가 idle/complete/error일 때만 전송
+    const phase = streamPhase ?? "idle";
+    if (!["idle", "complete", "error"].includes(phase)) return;
+
     const msg = _dealRoomPendingMsg;
     _dealRoomPendingMsg = null;
 
-    // sendMessage가 완전히 준비된 후 실행 보장
-    const timer = setTimeout(() => {
-      console.log('[DealRoom] sending (final):', msg.slice(0, 30));
-      sendMessage(msg);
-    }, 300);
-
-    return () => clearTimeout(timer);
-  }, [sendMessage]);
+    console.log('[DealRoom] sending final:', msg.slice(0, 30));
+    sendMessage(msg);
+  }, [sendMessage, streamPhase]);
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
