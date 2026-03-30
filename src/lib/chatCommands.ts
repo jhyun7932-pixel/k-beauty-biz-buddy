@@ -72,7 +72,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     label: "도움말",
     description: "사용 가능한 명령어 안내",
     icon: "❓",
-    message: "FLONIX AI가 할 수 있는 기능들을 알려줘",
+    message: "Fleety AI가 할 수 있는 기능들을 알려줘",
   },
 ];
 

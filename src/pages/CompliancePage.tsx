@@ -1,6 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTradeStore } from '@/stores/tradeStore';
+import { useAppStore } from '@/stores/appStore';
+import { useProducts } from '@/hooks/useProducts';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -23,7 +25,7 @@ interface CheckItem {
   detail: string;
   regulation: string;
   regulationUrl?: string;
-  flonixGuide: string;
+  fleetyGuide: string;
   actionType: 'ai_ask' | 'doc_gen' | 'link' | 'none';
   actionLabel?: string;
   actionPayload?: string;
@@ -79,7 +81,7 @@ const buildRulepack = (
             : 'Hydroquinone 미검출 — 이상 없음',
           regulation: 'FDA OTC Drug 분류 기준 (21 CFR Part 358)',
           regulationUrl: 'https://www.fda.gov/cosmetics',
-          flonixGuide: hasHydroquinone
+          fleetyGuide: hasHydroquinone
             ? '허용 기준: 화장품으로는 사용 불가 (OTC Drug 허가 별도 필요)\n참고 대안 성분: Arbutin (미백 유사 효과, 화장품 허용), Niacinamide\n※ 최종 성분 결정은 제조사·ODM과 협의 필요'
             : '',
           actionType: hasHydroquinone ? 'ai_ask' : 'none',
@@ -95,7 +97,7 @@ const buildRulepack = (
             : 'Fragrance 성분 미검출',
           regulation: 'MoCRA Section 604 (향료 성분 공개)',
           regulationUrl: 'https://www.fda.gov/cosmetics/cosmetics-laws-regulations/modernization-cosmetics-regulation-act-2022-mocra',
-          flonixGuide: hasFragrance
+          fleetyGuide: hasFragrance
             ? '조치 사항: Fragrance 구성 성분 중 알레르겐 26종 해당 여부 제조사 확인 후 개별 표기\n라벨 표기 형식: "Fragrance (Linalool, Limonene 등)" 방식 권장'
             : '',
           actionType: hasFragrance ? 'doc_gen' : 'none',
@@ -109,7 +111,7 @@ const buildRulepack = (
           detail: '제조시설의 FDA 등록 여부 확인 필요. 2023년 12월 29일부터 의무.',
           regulation: 'MoCRA Section 607',
           regulationUrl: 'https://www.fda.gov/cosmetics',
-          flonixGuide: '등록 주체: 제품 제조시설 (ODM/OEM 공장)\n확인 사항: 제조사에 FDA 시설 등록 번호(FEI) 요청\n등록 포털: FDA Cosmetics Direct',
+          fleetyGuide: '등록 주체: 제품 제조시설 (ODM/OEM 공장)\n확인 사항: 제조사에 FDA 시설 등록 번호(FEI) 요청\n등록 포털: FDA Cosmetics Direct',
           actionType: 'link',
           actionLabel: 'FDA 등록 포털 바로가기',
           actionPayload: 'https://www.fda.gov/cosmetics/cosmetics-laws-regulations/registration-and-product-listing-cosmetic-facilities-and-products',
@@ -120,7 +122,7 @@ const buildRulepack = (
           title: '제품 등록 (Product Listing)',
           detail: 'MoCRA에 따라 미국 내 유통 전 제품 등록 의무.',
           regulation: 'MoCRA Section 607',
-          flonixGuide: '등록 주체: 책임자 (Responsible Person, 통상 미국 수입자)\n제출 정보: 제품명, INCI 목록, 제조시설 정보\n처리 기간: 즉시 (온라인)',
+          fleetyGuide: '등록 주체: 책임자 (Responsible Person, 통상 미국 수입자)\n제출 정보: 제품명, INCI 목록, 제조시설 정보\n처리 기간: 즉시 (온라인)',
           actionType: 'ai_ask',
           actionLabel: 'AI에게 등록 절차 안내 받기',
           actionPayload: `[FDA 제품 등록 절차 안내]\n제품: ${productName}\n미국 MoCRA Product Listing 등록 절차를 단계별로 안내해줘.`,
@@ -133,7 +135,7 @@ const buildRulepack = (
             ? 'INCI에 Retinol 감지. 얼굴용 0.3%, 바디용 0.5% 이하 권고 (EU SCCS 기준 참고).'
             : 'Retinol 미검출',
           regulation: 'EU SCCS Opinion (2022) — 미국은 FDA 자율 기준 참고',
-          flonixGuide: hasRetinol
+          fleetyGuide: hasRetinol
             ? '권고 함량: 얼굴용 0.3% 이하, 바디용 0.5% 이하\n※ 미국은 현재 법적 상한 없으나 SCCS 기준 준용 권장\n최종 함량 결정은 제조사·ODM과 협의 필요'
             : '',
           actionType: hasRetinol ? 'ai_ask' : 'none',
@@ -146,7 +148,7 @@ const buildRulepack = (
           title: '영문 전성분 표기 (INCI)',
           detail: 'INCI 기준 영문 전성분 등록 완료.',
           regulation: 'FDA 21 CFR Part 701.3',
-          flonixGuide: '',
+          fleetyGuide: '',
           actionType: 'none',
         },
         {
@@ -155,7 +157,7 @@ const buildRulepack = (
           title: '순중량 / 용량 표기',
           detail: '미국 도량형 기준(oz/fl.oz) 표기 확인 필요.',
           regulation: 'FDA 21 CFR Part 701',
-          flonixGuide: '미국은 ml 병기 가능하나 oz 주표기 필요',
+          fleetyGuide: '미국은 ml 병기 가능하나 oz 주표기 필요',
           actionType: 'none',
         },
       ],
@@ -173,7 +175,7 @@ const buildRulepack = (
           detail: 'EU 내 유통 전 CPNP(Cosmetic Products Notification Portal) 등록 의무.',
           regulation: 'EU Regulation 1223/2009 Article 13',
           regulationUrl: 'https://ec.europa.eu/growth/sectors/cosmetics/cpnp_en',
-          flonixGuide: '등록 주체: EU 내 Responsible Person (RP)\n처리 기간: 즉시 (온라인 신청)\nRP 없을 시: EU 현지 에이전트 선임 필요',
+          fleetyGuide: '등록 주체: EU 내 Responsible Person (RP)\n처리 기간: 즉시 (온라인 신청)\nRP 없을 시: EU 현지 에이전트 선임 필요',
           actionType: 'ai_ask',
           actionLabel: 'AI에게 CPNP 등록 절차 묻기',
           actionPayload: `[CPNP 등록 절차 안내]\n제품: ${productName}\nEU CPNP 등록 절차와 Responsible Person 선임 방법을 안내해줘.`,
@@ -184,7 +186,7 @@ const buildRulepack = (
           title: 'Responsible Person (RP) 지정',
           detail: 'EU 내 법적 책임자 지정 필수. RP가 CPNP 등록 진행.',
           regulation: 'EU Regulation 1223/2009 Article 4',
-          flonixGuide: 'RP 역할: EU 내 제품 안전 책임, 당국 소통 창구\n선임 방법: EU 현지 에이전트 계약 또는 바이어가 RP 역할 수행 협의',
+          fleetyGuide: 'RP 역할: EU 내 제품 안전 책임, 당국 소통 창구\n선임 방법: EU 현지 에이전트 계약 또는 바이어가 RP 역할 수행 협의',
           actionType: 'ai_ask',
           actionLabel: 'AI에게 RP 선임 방법 묻기',
           actionPayload: `[EU RP 선임 안내]\n제품: ${productName}\nEU Responsible Person 선임 방법과 비용, 절차를 안내해줘.`,
@@ -197,7 +199,7 @@ const buildRulepack = (
             ? '얼굴용 0.3% 초과 금지 (2025년 시행). INCI에서 Retinol 감지됨.'
             : 'Retinol 미검출',
           regulation: 'EU SCCS/1642/22 Opinion on Vitamin A',
-          flonixGuide: hasRetinol
+          fleetyGuide: hasRetinol
             ? '허용 기준: 얼굴용 0.3%, 바디용 0.5%, 핸드크림 0.05% 이하\n시행일: 2025년 5월\n※ 함량 조정은 제조사·ODM과 협의 필요'
             : '',
           actionType: hasRetinol ? 'ai_ask' : 'none',
@@ -210,7 +212,7 @@ const buildRulepack = (
           title: 'Fragrance 26종 알레르겐 표기',
           detail: hasFragrance ? 'Fragrance 감지. Annex III 기준 26종 개별 표기 의무.' : 'Fragrance 미검출',
           regulation: 'EU Regulation 1223/2009 Annex III',
-          flonixGuide: hasFragrance ? '표기 방법: Fragrance 구성 성분 중 농도 0.001%(린스오프) / 0.01%(리브온) 초과 시 개별 표기\n제조사에 Fragrance breakdown sheet 요청 필요' : '',
+          fleetyGuide: hasFragrance ? '표기 방법: Fragrance 구성 성분 중 농도 0.001%(린스오프) / 0.01%(리브온) 초과 시 개별 표기\n제조사에 Fragrance breakdown sheet 요청 필요' : '',
           actionType: hasFragrance ? 'doc_gen' : 'none',
           actionLabel: 'EU 라벨 초안 생성',
           actionPayload: `EU Annex III 기준 ${productName}의 Fragrance 알레르겐 개별 표기 라벨 초안을 작성해줘.`,
@@ -221,7 +223,7 @@ const buildRulepack = (
           title: 'PIF (Product Information File) 준비',
           detail: 'EU 내 유통 기간 동안 PIF 보관 의무. 8가지 필수 서류 포함.',
           regulation: 'EU Regulation 1223/2009 Article 11',
-          flonixGuide: 'PIF 필수 구성: 제품 설명서, CPSR, 제조 방법, GMP 적합성 선언, 효능 입증 자료 등 8종',
+          fleetyGuide: 'PIF 필수 구성: 제품 설명서, CPSR, 제조 방법, GMP 적합성 선언, 효능 입증 자료 등 8종',
           actionType: 'ai_ask',
           actionLabel: 'PIF 체크리스트 확인하기',
           actionPayload: `EU PIF 8가지 필수 구성 서류 체크리스트와 ${productName}의 준비 현황을 안내해줘.`,
@@ -240,7 +242,7 @@ const buildRulepack = (
           title: '화장품/의약외품 분류 확인',
           detail: '기능성 클레임에 따라 의약외품으로 분류 시 후생노동성 허가 필요.',
           regulation: '약기법 제2조',
-          flonixGuide: '화장품: 성분 기준 내 자유 판매\n의약외품: 미백·모발 관련 효능 클레임 시 해당, 후생노동성 허가 필요\n※ 클레임 문구 결정은 바이어·현지 에이전트와 협의',
+          fleetyGuide: '화장품: 성분 기준 내 자유 판매\n의약외품: 미백·모발 관련 효능 클레임 시 해당, 후생노동성 허가 필요\n※ 클레임 문구 결정은 바이어·현지 에이전트와 협의',
           actionType: 'ai_ask',
           actionLabel: 'AI에게 분류 기준 묻기',
           actionPayload: `[일본 화장품/의약외품 분류 안내]\n제품: ${productName}\n일본 약기법 기준 화장품과 의약외품 분류 기준과 ${productName}의 해당 여부를 안내해줘.`,
@@ -251,7 +253,7 @@ const buildRulepack = (
           title: '일본어 라벨 표기 의무',
           detail: '전성분, 제조소/수입자, 용도 등 일본어 표기 필수.',
           regulation: '약기법 제61조',
-          flonixGuide: '필수 표기 항목: 제품명, 전성분(INCI → 일본어), 내용량, 제조판매업자, 로트번호\n현지 수입자(바이어)가 라벨 부착 대행 가능',
+          fleetyGuide: '필수 표기 항목: 제품명, 전성분(INCI → 일본어), 내용량, 제조판매업자, 로트번호\n현지 수입자(바이어)가 라벨 부착 대행 가능',
           actionType: 'doc_gen',
           actionLabel: '일본어 라벨 초안 생성',
           actionPayload: `일본 약기법 기준 ${productName}의 일본어 라벨 필수 기재사항 초안을 작성해줘.`,
@@ -262,7 +264,7 @@ const buildRulepack = (
           title: 'Hydroquinone 화장품 사용 금지',
           detail: hasHydroquinone ? 'Hydroquinone은 일본 화장품 배합 금지 성분입니다.' : 'Hydroquinone 미검출',
           regulation: '약기법 화장품 배합 금지 성분 고시',
-          flonixGuide: hasHydroquinone ? '참고 대안 성분: Tranexamic Acid, Arbutin (의약외품 허가 시 사용 가능)\n※ 최종 성분 결정은 제조사·ODM과 협의 필요' : '',
+          fleetyGuide: hasHydroquinone ? '참고 대안 성분: Tranexamic Acid, Arbutin (의약외품 허가 시 사용 가능)\n※ 최종 성분 결정은 제조사·ODM과 협의 필요' : '',
           actionType: hasHydroquinone ? 'ai_ask' : 'none',
           actionLabel: 'AI에게 대응 방법 묻기',
           actionPayload: `일본 화장품 Hydroquinone 금지 기준과 ${productName}의 대응 방법을 안내해줘.`,
@@ -273,7 +275,7 @@ const buildRulepack = (
           title: '제조판매업 허가 / 수입 대행',
           detail: '일본 수입 판매 시 제조판매업 허가 보유 업체 필요.',
           regulation: '약기법 제12조',
-          flonixGuide: '일반적으로 현지 바이어(수입자)가 제조판매업 허가 보유\n바이어에게 제조판매업 허가 번호 확인 요청',
+          fleetyGuide: '일반적으로 현지 바이어(수입자)가 제조판매업 허가 보유\n바이어에게 제조판매업 허가 번호 확인 요청',
           actionType: 'ai_ask',
           actionLabel: 'AI에게 수입 절차 묻기',
           actionPayload: `일본 화장품 수입 절차와 제조판매업 허가 확인 방법을 안내해줘.`,
@@ -292,7 +294,7 @@ const buildRulepack = (
         title: `${country.name} 수출 규제 확인`,
         detail: `${country.name} 수출을 위한 현지 규제 확인이 필요합니다.`,
         regulation: country.law,
-        flonixGuide: 'AI 에이전트에게 상세 규제 안내를 요청하세요.',
+        fleetyGuide: 'AI 에이전트에게 상세 규제 안내를 요청하세요.',
         actionType: 'ai_ask',
         actionLabel: 'AI에게 규제 안내 받기',
         actionPayload: `[${country.name} 수출 규제 안내]\n제품: ${productName}\n${country.name} (${country.law}) 수출 시 주요 규제 요건과 준비 사항을 안내해줘.`,
@@ -483,13 +485,13 @@ const CheckItemCard = ({
             )}
           </div>
 
-          {item.flonixGuide && (
+          {item.fleetyGuide && (
             <div className="bg-purple-50 rounded-lg p-3 border border-purple-100">
               <div className="text-xs text-purple-600 font-semibold mb-1.5 flex items-center gap-1">
-                <Sparkles className="h-3.5 w-3.5" /> FLONIX 가이드
+                <Sparkles className="h-3.5 w-3.5" /> Fleety 가이드
               </div>
               <p className="text-xs text-purple-800 whitespace-pre-line leading-relaxed">
-                {item.flonixGuide}
+                {item.fleetyGuide}
               </p>
               {item.status === 'fail' && (
                 <p className="text-xs text-gray-400 mt-2 italic">
@@ -626,24 +628,26 @@ export default function CompliancePage() {
   const [selectedCountry, setSelectedCountry] = useState<CountryCode | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<string>('');
   const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  const PRODUCTS = [
-    {
-      id: 'CCS-001',
-      name: 'Centella Calming Serum',
-      inci: ['Water', 'Centella Asiatica Extract', 'Niacinamide', 'Hydroquinone', 'Fragrance', 'Glycerin'],
-    },
-    {
-      id: 'HS-002',
-      name: 'Centella Calming Serum 2',
-      inci: ['Water', 'Centella Asiatica Extract', 'Niacinamide', 'Glycerin', 'Panthenol'],
-    },
-    {
-      id: 'HS-001',
-      name: 'EGF ALLANTENOL',
-      inci: ['Water', 'EGF', 'Allantoin', 'Retinol', 'Triethanolamine', 'Fragrance'],
-    },
-  ];
+  // ✅ Supabase에서 실제 등록된 제품 동적 로드
+  const { productEntries } = useAppStore();
+  const { loadProducts } = useProducts();
+
+  useEffect(() => {
+    loadProducts();
+  }, []);
+
+  const PRODUCTS = productEntries.map((p) => ({
+    id: p.skuCode || p.id || String(Math.random()),
+    name: p.productName || '이름 미등록',
+    inci: p.inciText
+      ? p.inciText
+          .split(/[,\n]/)
+          .map((s: string) => s.trim())
+          .filter(Boolean)
+      : [],
+  }));
 
   const selectedProductData = PRODUCTS.find(p => p.id === selectedProduct);
 
@@ -674,16 +678,112 @@ export default function CompliancePage() {
 
   const handleEmailDraft = () => {
     const country = COUNTRIES.find(c => c.code === selectedCountry);
+    const failItems = sortedItems.filter(i => i.status === 'fail');
+    const warnItems = sortedItems.filter(i => i.status === 'warn');
+    const passItems = sortedItems.filter(i => i.status === 'pass');
+
     setPendingAutoMessage(
-      `[수출 준비 완료 이메일 초안]\n제품: ${selectedProductData?.name}\n수출 국가: ${country?.name}\n\n이 제품의 ${country?.name} 수출 준비가 완료되었습니다. 바이어에게 보낼 수출 준비 완료 안내 이메일 초안을 영문으로 작성해줘.`
+`[수출 준비 완료 — 바이어 커뮤니케이션 이메일 초안 생성]
+
+■ 제품 정보
+- 제품명: ${selectedProductData?.name}
+- 제품코드: ${selectedProductData?.id}
+- INCI 등록 성분 수: ${selectedProductData?.inci.length}종
+
+■ 수출 국가 & 규제 현황
+- 타겟 국가: ${country?.name} (${country?.law})
+- 규제 분석 결과: Fail ${failItems.length}건 / Warn ${warnItems.length}건 / Pass ${passItems.length}건
+- 통과 항목: ${passItems.map(i => i.title).join(', ')}
+- 검토 중 항목: ${warnItems.map(i => i.title).join(', ')}
+
+■ 요청 사항
+아래 조건을 모두 반영한 B2B 수출 영문 이메일 초안을 작성해줘:
+
+1. 어조: 글로벌 K-뷰티 브랜드의 전문적이고 신뢰감 있는 톤 (지나치게 세일즈적이지 않게)
+
+2. 필수 포함 내용:
+   - ${country?.name} ${country?.law} 규제 검토 완료 사실 명시
+   - 제품의 핵심 성분 강점 (Centella Asiatica 등 K-뷰티 핵심 원료)
+   - 샘플 제공 가능 여부 + MOQ(Minimum Order Quantity) 협의 의향
+   - Proforma Invoice 제공 준비 완료 언급
+   - 결제 조건 협의 의향 (T/T, L/C 등 유연하게)
+
+3. 이메일 구조:
+   - Subject line (임팩트 있게)
+   - Opening (브랜드 소개 + 컨택 이유)
+   - Product Highlight (규제 통과 + 성분 강점)
+   - Commercial Terms (MOQ, 결제, 샘플)
+   - CTA (미팅/샘플 요청 유도)
+   - Closing
+
+4. 무역 실무 용어 자연스럽게 사용:
+   FOB, MOQ, Lead Time, COA(Certificate of Analysis),
+   MSDS, Proforma Invoice 등 필요 시 자연스럽게 포함
+
+결과물: 즉시 복사해서 바이어에게 발송 가능한 수준의 완성형 영문 이메일`
     );
     navigate('/home');
   };
 
   const handleProposalGen = () => {
     const country = COUNTRIES.find(c => c.code === selectedCountry);
+    const passItems = sortedItems.filter(i => i.status === 'pass');
+    const warnItems = sortedItems.filter(i => i.status === 'warn');
+
     setPendingAutoMessage(
-      `[B2B Proposal 생성]\n제품: ${selectedProductData?.name}\n수출 국가: ${country?.name} (${country?.law} 규제 통과)\n\n${country?.name}향 B2B 제품 제안서를 작성해줘. 규제 통과 내용과 제품 주요 성분 강점을 포함해줘.`
+`[${country?.name}향 K-뷰티 B2B 수출 제안서 생성]
+
+■ 제품 기본 정보
+- 제품명: ${selectedProductData?.name} (${selectedProductData?.id})
+- 주요 INCI 성분: ${selectedProductData?.inci.slice(0, 6).join(', ')}
+- 제형: 세럼 (Serum)
+- 타겟 피부 고민: 진정, 장벽 강화 (Centella 기반)
+
+■ 타겟 국가 & 규제 검토 결과
+- 수출 국가: ${country?.name}
+- 적용 규제: ${country?.law}
+- 규제 통과 항목 (바이어에게 어필 포인트):
+${passItems.map(i => `  · ${i.title}: ${i.regulation}`).join('\n')}
+- 검토/준비 중 항목:
+${warnItems.map(i => `  · ${i.title}`).join('\n')}
+
+■ 제안서 구성 요청
+아래 섹션을 포함한 전문 B2B 제안서(Proposal)를 작성해줘.
+바이어(해외 유통사/리테일러)가 구매 결정을 내릴 수 있는 수준으로:
+
+[섹션 1] Executive Summary
+- 브랜드 소개 + 이 제품이 ${country?.name} 시장에 적합한 이유 요약
+
+[섹션 2] Product Overview
+- 제품명, 제형, 용량, 주요 성분 (INCI 기반)
+- 핵심 효능 클레임 (피부 진정, 장벽 강화, 수분 공급)
+- K-뷰티 트렌드와의 연결 (Skin Barrier Repair, Clean Beauty)
+
+[섹션 3] Regulatory Compliance — ${country?.name}
+- ${country?.law} 규제 검토 완료 사실
+- 통과 항목 구체 명시 (바이어 신뢰도 ↑)
+- 필요 시 추가 준비 항목 및 일정 안내
+
+[섹션 4] Commercial Terms (Draft)
+- MOQ: (협의 가능 범위 제시)
+- Lead Time: 샘플 2주 / 본오더 6-8주 (일반적 기준)
+- Payment Terms: T/T 30% 선금, 70% 선적 전 / L/C at sight 협의 가능
+- Incoterms: FOB Incheon 기준 (CIF 협의 가능)
+- Packaging: 수출용 단품/마스터박스 스펙 (추후 확정)
+- HS Code: 3304 (기초화장품류) — 통관 참고용
+
+[섹션 5] Why K-Beauty & Why Us
+- 글로벌 K-뷰티 시장 성장세 데이터 인용
+- 당사 브랜드 차별점 (성분 철학, 품질 인증 등)
+
+[섹션 6] Next Steps
+- 샘플 요청 → Proforma Invoice → 본계약 단계 제시
+- 담당자 연락처 + 미팅 제안
+
+■ 출력 형식
+- 영문 제안서 (한국어 주석 병기 가능)
+- 각 섹션 헤더 명확히 구분
+- 바이어가 PDF로 저장해 내부 검토 가능한 수준의 완성도`
     );
     navigate('/home');
   };
@@ -708,7 +808,7 @@ export default function CompliancePage() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-auto p-6 max-w-3xl mx-auto w-full space-y-8">
+        <div ref={scrollRef} className="flex-1 overflow-auto p-6 max-w-3xl mx-auto w-full space-y-8">
           <div>
             <div className="flex items-center gap-2 mb-4">
               <div className="w-6 h-6 rounded-full bg-purple-600 text-white text-xs flex items-center justify-center font-bold">1</div>
@@ -739,6 +839,12 @@ export default function CompliancePage() {
               <h2 className={`font-semibold ${selectedCountry ? 'text-gray-800' : 'text-gray-400'}`}>분석할 제품 선택</h2>
             </div>
             <div className="space-y-3">
+              {PRODUCTS.length === 0 && (
+                <div className="text-center py-6 text-sm text-gray-400">
+                  <p>등록된 제품이 없습니다.</p>
+                  <p className="mt-1">제품 관리 페이지에서 제품을 먼저 등록해주세요.</p>
+                </div>
+              )}
               {PRODUCTS.map(product => (
                 <button
                   key={product.id}
@@ -764,6 +870,14 @@ export default function CompliancePage() {
             </div>
           </div>
 
+          <p className="text-xs text-gray-400 text-center">
+            💡 Fleety는 규제 기준 안내와 문서 자동화를 제공합니다.
+            성분 함량 조정 및 포뮬라 변경은 제조사·ODM과 협의하세요.
+          </p>
+        </div>
+
+        {/* 버튼은 스크롤 밖, 항상 하단 고정 */}
+        <div className="p-4 border-t border-gray-100 bg-white">
           <Button
             className="w-full h-14 text-base font-semibold bg-purple-600 hover:bg-purple-700 gap-2"
             disabled={!selectedCountry || !selectedProduct}
@@ -773,11 +887,6 @@ export default function CompliancePage() {
             규제 분석 시작
             <ArrowRight className="h-5 w-5" />
           </Button>
-
-          <p className="text-xs text-gray-400 text-center">
-            💡 FLONIX는 규제 기준 안내와 문서 자동화를 제공합니다.
-            성분 함량 조정 및 포뮬라 변경은 제조사·ODM과 협의하세요.
-          </p>
         </div>
       </div>
     );
@@ -791,7 +900,12 @@ export default function CompliancePage() {
       <div className="p-4 border-b border-gray-100 bg-white sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setStep('select')}
+            onClick={() => {
+              setStep('select');
+              setTimeout(() => {
+                scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+              }, 50);
+            }}
             className="text-gray-400 hover:text-gray-600 text-sm flex items-center gap-1"
           >
             ← 다시 선택
@@ -822,17 +936,6 @@ export default function CompliancePage() {
       <div className="flex-1 overflow-auto">
         <div className="flex gap-6 p-6 max-w-5xl mx-auto">
           <div className="flex-1 space-y-3">
-            {isClearForExport && selectedProductData && (
-              <CompletionBanner
-                countryName={country.name}
-                countryFlag={country.flag}
-                productName={selectedProductData.name}
-                onEmailDraft={handleEmailDraft}
-                onProposalGen={handleProposalGen}
-                onDealRoomLink={() => navigate('/export-projects')}
-              />
-            )}
-
             {failCount > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-2">
@@ -900,6 +1003,17 @@ export default function CompliancePage() {
                   ))}
                 </div>
               </div>
+            )}
+
+            {isClearForExport && selectedProductData && (
+              <CompletionBanner
+                countryName={country.name}
+                countryFlag={country.flag}
+                productName={selectedProductData.name}
+                onEmailDraft={handleEmailDraft}
+                onProposalGen={handleProposalGen}
+                onDealRoomLink={() => navigate('/export-projects')}
+              />
             )}
 
             <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200">

@@ -8,7 +8,7 @@ const AI_TECHS = [
   title: 'Vision AI',
   subtitle: '성분 자동 추출',
   description:
-  '제품 라벨 사진 한 장만 업로드하세요. FLONIX AI가 이미지 속 전성분(INCI)을 100%의 정확도로 인식하고 디지털 데이터로 변환합니다.',
+  '제품 라벨 사진 한 장만 업로드하세요. Fleety AI가 이미지 속 전성분(INCI)을 100%의 정확도로 인식하고 디지털 데이터로 변환합니다.',
   accent: 'from-blue-400 to-cyan-400',
   glow: 'bg-blue-500/20'
 },
@@ -63,7 +63,7 @@ export function AIEngineSection() {
         {/* Header */}
         <div className="text-center mb-20">
           <p className="text-sm font-semibold tracking-wider uppercase mb-4 bg-gradient-to-r from-blue-400 via-violet-400 to-emerald-400 bg-clip-text text-transparent">
-            The AI Behind FLONIX
+            The AI Behind Fleety
           </p>
           <h2 className="text-3xl sm:text-4xl lg:text-[2.5rem] font-bold text-white leading-snug max-w-3xl mx-auto">
             무역 전문가의 두뇌를 그대로 이식한

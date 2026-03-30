@@ -66,7 +66,7 @@ export function CoreFeaturesSection() {
             Core Features
           </p>
           <h2 className="text-3xl sm:text-4xl font-bold text-foreground mb-4">
-            왜 FLONIX인가요?
+            왜 Fleety인가요?
           </h2>
           <p className="text-muted-foreground max-w-2xl mx-auto text-base">
             수출 실무의 가장 큰 병목 3가지를 정면으로 해결합니다.

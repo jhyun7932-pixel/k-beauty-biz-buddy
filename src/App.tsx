@@ -13,7 +13,7 @@ import OnboardingPage from "@/pages/OnboardingPage";
 import HomePage from "@/pages/HomePage";
 import MyDataPage from "@/pages/MyDataPage";
 import ExportProjectsPage from "@/pages/ExportProjectsPage";
-import ComplianceChecklistPage from "@/pages/ComplianceChecklistPage";
+import ComplianceChecklistPage from "@/pages/CompliancePage";
 import SettingsPage from "@/pages/SettingsPage";
 import ExpertConnectionPage from "@/pages/ExpertConnectionPage";
 import SharePage from "@/pages/SharePage";

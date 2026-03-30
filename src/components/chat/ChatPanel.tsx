@@ -148,7 +148,7 @@ export default function ChatPanel({
             <span className="text-white font-bold text-sm">F</span>
           </div>
           <div>
-            <h1 className="text-sm font-semibold text-gray-900 leading-tight">FLONIX AI</h1>
+            <h1 className="text-sm font-semibold text-gray-900 leading-tight">Fleety AI</h1>
             <p className="text-[10px] text-gray-400">K-Beauty Export OS</p>
           </div>
         </div>
@@ -172,7 +172,7 @@ export default function ChatPanel({
                 <span className="text-white font-bold text-xl">F</span>
               </div>
               <h2 className="text-lg font-semibold text-gray-900 mb-1">
-                FLONIX AI Trade Assistant
+                Fleety AI Trade Assistant
               </h2>
               <p className="text-sm text-gray-500 mb-5">
                 K-뷰티 수출 서류, 규제 확인, 물류 견적까지 AI가 도와드립니다.

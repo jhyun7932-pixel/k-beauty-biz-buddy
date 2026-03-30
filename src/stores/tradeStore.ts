@@ -198,7 +198,7 @@ export const useTradeStore = create<TradeStore>()(
       }),
     }),
     {
-      name:"flonix-trade-store",
+      name:"fleety-trade-store",
       partialize:(s)=>({ messages:s.messages.slice(-50), currentDocument:s.currentDocument, complianceResult:s.complianceResult }),
     }
   )

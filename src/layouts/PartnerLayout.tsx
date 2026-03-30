@@ -48,7 +48,7 @@ export default function PartnerLayout() {
                   <Handshake className="h-5 w-5 text-white" />
                 </div>
                 <div>
-                  <p className="text-sm font-bold tracking-tight">FLONIX</p>
+                  <p className="text-sm font-bold tracking-tight">Fleety</p>
                   <p className="text-[10px] text-white/40 tracking-wider uppercase">Partner Portal</p>
                 </div>
               </div>
@@ -99,7 +99,7 @@ export default function PartnerLayout() {
         <div className="flex-1 flex flex-col bg-background">
           <header className="h-14 border-b border-border flex items-center px-4 gap-3 bg-card">
             <SidebarTrigger />
-            <h1 className="text-sm font-semibold text-foreground">FLONIX Partner Portal</h1>
+            <h1 className="text-sm font-semibold text-foreground">Fleety Partner Portal</h1>
           </header>
 
           <main className="flex-1 p-6 overflow-auto">

@@ -22,7 +22,9 @@ export function useStreamingChat() {
     store.addUserMessage(content);
     store.onStreamConnecting();
 
-    const apiMessages = useTradeStore.getState().messages.map(m => ({
+    // v3.0: message(현재 입력) + history(이전 대화) 분리 전송
+    const allMessages = useTradeStore.getState().messages;
+    const history = allMessages.slice(0, -1).map(m => ({
       role: m.role, content: m.content,
     }));
 
@@ -36,7 +38,7 @@ export function useStreamingChat() {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ messages: apiMessages, hasFile: false }),
+        body: JSON.stringify({ message: content, history }),
         signal: abortRef.current.signal,
       });
 
@@ -49,6 +51,7 @@ export function useStreamingChat() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let accumulatedToolArgs = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -57,37 +60,47 @@ export function useStreamingChat() {
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
-        let eventName = "";
-        let dataLine = "";
         for (const line of lines) {
-          if (line.startsWith("event: ")) eventName = line.slice(7).trim();
-          else if (line.startsWith("data: ")) dataLine = line.slice(6).trim();
-          else if (line === "" && eventName && dataLine) {
-            try {
-              const data = JSON.parse(dataLine);
-              switch (eventName) {
-                case "text_delta":
-                  if (data.text) store.onTextDelta(data.text);
-                  break;
-                case "tool_call_start":
-                  store.onToolCallStart(data.tool_name, data.tool_id);
-                  break;
-                case "tool_input_delta":
-                  store.onToolInputDelta(data.partial_json, data.accumulated);
-                  break;
-                case "tool_call_complete":
-                  store.onToolCallComplete(data.tool_name, data.document);
-                  break;
-                case "stream_end":
-                  store.onStreamEnd();
-                  break;
-                case "error":
-                  store.onStreamError(data.message);
-                  break;
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data: ")) continue;
+          const jsonStr = trimmed.slice(6);
+          if (jsonStr === "[DONE]") continue;
+
+          try {
+            const evt = JSON.parse(jsonStr);
+            const { type, data } = evt;
+
+            switch (type) {
+              case "text_delta":
+                if (data?.content) store.onTextDelta(data.content);
+                break;
+              case "tool_call_start":
+                accumulatedToolArgs = "";
+                store.onToolCallStart(data?.name || "", "");
+                break;
+              case "tool_call_delta":
+                if (data?.arguments_chunk) {
+                  accumulatedToolArgs += data.arguments_chunk;
+                  store.onToolInputDelta(data.arguments_chunk, accumulatedToolArgs);
+                }
+                break;
+              case "tool_call_end": {
+                let doc = {};
+                try { doc = JSON.parse(data?.arguments_complete || accumulatedToolArgs); } catch {}
+                store.onToolCallComplete(data?.name || "", doc);
+                break;
               }
-            } catch(e) { console.warn("SSE parse err", e); }
-            eventName = ""; dataLine = "";
-          }
+              case "text_delta_phase2":
+                if (data?.content) store.onTextDelta(data.content);
+                break;
+              case "stream_end":
+                store.onStreamEnd();
+                break;
+              case "error":
+                store.onStreamError(data?.message || "알 수 없는 오류");
+                break;
+            }
+          } catch(e) { console.warn("SSE parse err", e); }
         }
       }
 

@@ -1,5 +1,5 @@
 -- =============================================================================
--- FLONIX (플로닉스) — Supabase Database Setup Script
+-- Fleety — Supabase Database Setup Script
 -- K-Beauty B2B SaaS Export Platform
 -- =============================================================================
 -- 사용법: Supabase 대시보드 > SQL 편집기에 전체 내용을 붙여넣고 실행하세요.
@@ -1152,7 +1152,7 @@ ON CONFLICT (country_code, rulepack_version) DO NOTHING;
 DO $$
 BEGIN
   RAISE NOTICE '==========================================';
-  RAISE NOTICE 'FLONIX Database Setup 완료!';
+  RAISE NOTICE 'Fleety Database Setup 완료!';
   RAISE NOTICE '==========================================';
   RAISE NOTICE '생성된 Enum: 13종 (중복 시 건너뜀)';
   RAISE NOTICE '생성된 테이블: 15개 (중복 시 건너뜀)';

@@ -117,7 +117,7 @@ export function LeftDock({ isCollapsed = false, onToggleCollapse }: LeftDockProp
             <div className="p-1 rounded-md bg-gradient-to-br from-primary/20 to-purple-500/20">
               <Sparkles className="h-4 w-4 text-primary" />
             </div>
-            <span className="font-bold text-sm text-foreground">FLONIX</span>
+            <span className="font-bold text-sm text-foreground">Fleety</span>
           </div>
         )}
         <Tooltip delayDuration={0}>

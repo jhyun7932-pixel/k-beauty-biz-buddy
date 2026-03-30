@@ -203,9 +203,13 @@ async function saveMsg(
   sb: ReturnType<typeof createClient>, uid: string,
   role: "user" | "assistant", content: string, isDoc = false, summary?: string,
 ) {
-  await sb.from("ai_chat_messages").insert({
-    user_id: uid, role, content, is_doc_output: isDoc, doc_summary: summary,
-  }).catch(() => {});
+  try {
+    await sb.from("ai_chat_messages").insert({
+      user_id: uid, role, content, is_doc_output: isDoc, doc_summary: summary,
+    });
+  } catch {
+    // 저장 실패해도 채팅 기능에 영향 없음
+  }
 }
 
 Deno.serve(async (req) => {

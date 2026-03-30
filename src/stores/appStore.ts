@@ -74,7 +74,7 @@ export const useAppStore = create<AppStore>()(
       },
     }),
     {
-      name: 'kbeauty-app-store',
+      name: 'fleety-app-store',
       partialize: (state) => ({
         session: state.session,
         project: state.project,

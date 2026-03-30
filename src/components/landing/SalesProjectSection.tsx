@@ -17,12 +17,12 @@ const BENEFITS = [
 {
   icon: Link2,
   title: 'OS 다이렉트 등록',
-  description: '발굴된 바이어 정보를 FLONIX CRM 파이프라인에 즉시 등록'
+  description: '발굴된 바이어 정보를 Fleety CRM 파이프라인에 즉시 등록'
 },
 {
   icon: UserCheck,
   title: '전담 매니저 배정',
-  description: '글로벌 진출 전략 맞춤 컨설팅부터 바이어 발굴 지원까지 플로닉스 무역팀의 밀착 컨설팅'
+  description: '글로벌 진출 전략 맞춤 컨설팅부터 바이어 발굴 지원까지 Fleety 무역팀의 밀착 컨설팅'
 }];
 
 
@@ -122,9 +122,9 @@ export function SalesProjectSection() {
                 '진짜 바이어'를 연결합니다.
               </span>
               <br />
-              플로닉스 세일즈 프로젝트
+              Fleety 세일즈 프로젝트
             </h2>
-            <p className="text-base sm:text-lg text-white/60 leading-relaxed">해외 진출이 처음이신가요? 플로닉스의 글로벌 무역 전문가팀이 타겟 국가의 진성 바이어 리드를 직접 발굴 지원하여 고객사의 FLONIX OS에 등록해 드립니다. 바이어 매칭부터 첫 수출의 완성까지, 가장 빠르고 확실한 성공 궤도에 올라타세요.
+            <p className="text-base sm:text-lg text-white/60 leading-relaxed">해외 진출이 처음이신가요? Fleety의 글로벌 무역 전문가팀이 타겟 국가의 진성 바이어 리드를 직접 발굴 지원하여 고객사의 Fleety OS에 등록해 드립니다. 바이어 매칭부터 첫 수출의 완성까지, 가장 빠르고 확실한 성공 궤도에 올라타세요.
 
 
 
@@ -184,7 +184,7 @@ export function SalesProjectSection() {
 
             <div className="space-y-2">
               <Label htmlFor="sp-company">회사명 *</Label>
-              <Input id="sp-company" placeholder="예) 플로닉스코스메틱" value={form.company} onChange={(e) => handleChange('company', e.target.value)} maxLength={100} required />
+              <Input id="sp-company" placeholder="예) Fleety코스메틱" value={form.company} onChange={(e) => handleChange('company', e.target.value)} maxLength={100} required />
             </div>
             <div className="space-y-2">
               <Label htmlFor="sp-name">담당자 성함 *</Label>

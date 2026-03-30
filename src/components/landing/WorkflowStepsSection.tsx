@@ -65,7 +65,7 @@ function MockupImage({ step }: { step: typeof STEPS[number] }) {
           <span className="w-2.5 h-2.5 rounded-full bg-warning/60" />
           <span className="w-2.5 h-2.5 rounded-full bg-success/60" />
         </div>
-        <span className="text-xs text-muted-foreground ml-2">FLONIX — {titles[step.id]}</span>
+        <span className="text-xs text-muted-foreground ml-2">Fleety — {titles[step.id]}</span>
       </div>
       <img
         src={STEP_IMAGES[step.id]}
